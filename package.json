@@ -1,0 +1,22 @@
+{
+  "name": "pixelkit",
+  "version": "1.0.0",
+  "description": "Local, in-browser background remover for game UI assets, icons and sprite/texture atlases.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0"
+  },
+  "dependencies": {
+    "@fontsource-variable/inter": "^5.2.8",
+    "lucide-react": "latest",
+    "react": "latest",
+    "react-dom": "latest"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "latest",
+    "vite": "latest"
+  }
+}
