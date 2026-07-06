@@ -67,7 +67,9 @@ function selectKey(d, w, h, K, tolerance, sel) {
   }
 }
 
-// The chroma recipe. seeds: [{x, y}] in image pixels. Returns a fresh canvas.
+// The chroma recipe. seeds: [{x, y, tolerance?}] in image pixels — a seed may
+// carry its own tolerance (stamped at click time); opts.tolerance is the
+// fallback and covers the configured key color. Returns a fresh canvas.
 export function chromaCutout(sourceCanvas, seeds, opts) {
   const {
     tolerance = 20, contract = 1, smooth = 2, feather = 1,
@@ -89,12 +91,12 @@ export function chromaCutout(sourceCanvas, seeds, opts) {
     const x = Math.min(w - 1, Math.max(0, Math.round(s.x)));
     const y = Math.min(h - 1, Math.max(0, Math.round(s.y)));
     const i = (y * w + x) * 4;
-    keys.push([d[i], d[i + 1], d[i + 2]]);
+    keys.push({ K: [d[i], d[i + 1], d[i + 2]], tol: s.tolerance ?? tolerance });
   }
   // No clicks yet: fall back to the configured key color, so a standard
   // green/magenta screen keys out with zero interaction.
-  if (!keys.length && opts.key) keys.push(hexToRgb(opts.key));
-  for (const K of keys) selectKey(d, w, h, K, tolerance, sel);
+  if (!keys.length && opts.key) keys.push({ K: hexToRgb(opts.key), tol: tolerance });
+  for (const k of keys) selectKey(d, w, h, k.K, k.tol, sel);
 
   // The raw selection drives decontamination: refinement (contract/smooth)
   // can annihilate small key pockets, but their color must still be
@@ -132,7 +134,7 @@ export function chromaCutout(sourceCanvas, seeds, opts) {
       let acc = 0;
       for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc >= selCount * 0.95) { Lref = v; break; } }
     } else {
-      for (const K of keys) Lref = Math.max(Lref, luminance(K[0], K[1], K[2]));
+      for (const { K } of keys) Lref = Math.max(Lref, luminance(K[0], K[1], K[2]));
     }
     if (Lref >= 8) { // a black screen leaves no headroom for shadows
       dark = new Float32Array(w * h);
@@ -160,7 +162,7 @@ export function chromaCutout(sourceCanvas, seeds, opts) {
   // a game engine can never bleed the screen color out of transparent
   // texels.
   if (keys.length && despill > 0) {
-    const K = [0, 1, 2].map(c => keys.reduce((s, k) => s + k[c], 0) / keys.length);
+    const K = [0, 1, 2].map(c => keys.reduce((s, k) => s + k.K[c], 0) / keys.length);
     const Lk = luminance(K[0], K[1], K[2]);
     const cK = [K[0] - Lk, K[1] - Lk, K[2] - Lk]; // zero-luma key chroma
     const [top, mid, low] = [0, 1, 2].sort((a, b) => K[b] - K[a]);

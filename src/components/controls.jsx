@@ -25,12 +25,17 @@ export function Section({ title, icon, children, action, collapsible = false, de
   );
 }
 
-export function Range({ label, value, min, max, step = 1, set, suffix = '', tip }) {
+// `swatch` (a CSS color) marks the slider as bound to one color sample —
+// a small dot of that color appears next to the label.
+export function Range({ label, value, min, max, step = 1, set, suffix = '', tip, swatch }) {
   const pct = ((value - min) / (max - min)) * 100;
   return (
     <label className="range">
       <span>
-        <em className={tip ? 'lbl hastip' : 'lbl'} data-tip={tip}>{label}</em>
+        <em className={tip ? 'lbl hastip' : 'lbl'} data-tip={tip}>
+          {label}
+          {swatch && <i className="lblswatch" style={{ background: swatch }} aria-hidden="true" />}
+        </em>
         <b>{value}{suffix}</b>
       </span>
       <input

@@ -88,7 +88,11 @@ export default function App() {
   const [beforeHold, setBeforeHold] = useState(false);
 
   // Wand seeds: background points the user clicked (per image, not persisted).
+  // Each seed carries the tolerance it was clicked at; selecting its chip
+  // rebinds the Tolerance slider to that one sample.
   const [seeds, setSeeds] = useState([]);
+  const [selectedSeedId, setSelectedSeedId] = useState(null);
+  const seedIdRef = useRef(0);
 
   // User-drawn keep / erase / subtract regions (per image, not persisted).
   const [regions, setRegions] = useState([]);
@@ -128,7 +132,7 @@ export default function App() {
       setUrl(loaded.url); // previous URL is revoked by the cleanup effect below
       setFile(f); setImg(loaded.img); setBaseResult(null); setError(null);
       setZoom(1); setPan({ x: 0, y: 0 }); setExcluded({});
-      setSeeds([]); setRegions([]); setRegionTool(null); setShowBefore(false);
+      setSeeds([]); setSelectedSeedId(null); setRegions([]); setRegionTool(null); setShowBefore(false);
     } catch {
       setError('Could not open that image.');
     }
@@ -181,10 +185,17 @@ export default function App() {
     });
   }, [seeds, originalCanvas]);
 
+  // A new click bakes in the slider's current tolerance (like Photoshop's
+  // wand) and becomes the selected sample, so dragging Tolerance right after
+  // clicking tunes exactly that click without re-flooding earlier ones.
   const addSeed = useCallback(pt => {
-    setSeeds(s => [...s, pt]);
-    flash('Background sample added — keep clicking similar areas, Ctrl+Z undoes');
-  }, [flash]);
+    const id = ++seedIdRef.current;
+    setSeeds(s => [...s, { ...pt, tolerance: cur.tolerance, id }]);
+    setSelectedSeedId(id);
+    flash('Background sample added — drag Tolerance to tune it, Ctrl+Z undoes');
+  }, [flash, cur.tolerance]);
+
+  const selectedSeed = useMemo(() => seedInfo.find(s => s.id === selectedSeedId) || null, [seedInfo, selectedSeedId]);
 
   // Paste from clipboard ----------------------------------------------------
   useEffect(() => {
@@ -257,7 +268,8 @@ export default function App() {
 
   function autoGrid() {
     if (!originalCanvas) return;
-    const g = autoDetectGrid(originalCanvas, { keys: seedInfo.map(s => s.hex), tolerance: cur.tolerance });
+    const tol = seeds.length ? Math.max(...seeds.map(s => s.tolerance ?? cur.tolerance)) : cur.tolerance;
+    const g = autoDetectGrid(originalCanvas, { keys: seedInfo.map(s => s.hex), tolerance: tol });
     setGrid(gr => ({ ...gr, cols: g.cols, rows: g.rows }));
   }
 
@@ -453,10 +465,17 @@ export default function App() {
               ) : (
                 <span className="keyauto tipdown" data-tip="Nothing selected yet — click the image background to start removing it">No background clicked yet</span>
               ))}
-              {seedInfo.map((s, i) => (
-                <span className="keychip" key={`${s.x},${s.y},${i}`}>
-                  <i style={{ background: s.hex }} aria-hidden="true" /> {s.hex}
-                  <button type="button" onClick={() => setSeeds(ss => ss.filter((_, j) => j !== i))} aria-label={`Remove wand sample ${s.hex}`} data-tip="Remove this wand sample"><Trash2 size={12} /></button>
+              {seedInfo.map(s => (
+                <span className={'keychip' + (s.id === selectedSeedId ? ' sel' : '')} key={s.id}>
+                  <button
+                    type="button" className="chippick"
+                    aria-pressed={s.id === selectedSeedId}
+                    data-tip={s.id === selectedSeedId ? 'Selected — the Tolerance slider tunes this sample; click to deselect' : 'Select this sample to retune its tolerance'}
+                    onClick={() => setSelectedSeedId(id => (id === s.id ? null : s.id))}
+                  >
+                    <i style={{ background: s.hex }} aria-hidden="true" /> {s.hex} · {s.tolerance}
+                  </button>
+                  <button type="button" onClick={() => setSeeds(ss => ss.filter(x => x.id !== s.id))} aria-label={`Remove wand sample ${s.hex}`} data-tip="Remove this wand sample"><Trash2 size={12} /></button>
                 </span>
               ))}
             </div>
@@ -466,7 +485,18 @@ export default function App() {
                 <button type="button" className="ghost" data-tip="Clear all wand clicks and start over" onClick={() => setSeeds([])}><Trash2 size={13} /> Clear ({seeds.length})</button>
               </div>
             )}
-            <Range label="Tolerance" tip="How similar a pixel must be to the clicked color to join the selection — Photoshop wand tolerance. Raise it if background remains; lower it if the subject gets eaten." value={cur.tolerance} min={0} max={100} set={v => setCur({ tolerance: v })} />
+            <Range
+              label="Tolerance"
+              swatch={selectedSeed?.hex}
+              tip={selectedSeed
+                ? `Tolerance of the selected ${selectedSeed.hex} sample only — other samples keep their own. Raise it if background remains around that click; lower it if the subject gets eaten. New clicks start from this value.`
+                : 'How similar a pixel must be to the clicked color to join the selection — Photoshop wand tolerance. Each sample keeps the tolerance it was clicked at; select its chip above to retune just that sample.'}
+              value={selectedSeed ? selectedSeed.tolerance : cur.tolerance} min={0} max={100}
+              set={v => {
+                setCur({ tolerance: v });
+                if (selectedSeed) setSeeds(ss => ss.map(s => (s.id === selectedSeed.id ? { ...s, tolerance: v } : s)));
+              }}
+            />
             <Range label="Contract / expand" tip="Positive shrinks the selection inward, keeping a safety margin around the object (Select > Modify > Contract). Negative expands it outward to eat leftover background fringe (Select > Modify > Expand). Steps of 0.1 px for fine edges." value={cur.contract} min={-10} max={10} step={0.1} set={v => setCur({ contract: v })} suffix=" px" />
             <Range label="Smooth" tip="Rounds off jagged, stair-stepped selection edges (Select > Modify > Smooth). Steps of 0.1 px for fine edges." value={cur.smooth} min={0} max={10} step={0.1} set={v => setCur({ smooth: v })} suffix=" px" />
             <Range label="Feather" tip="Softens the selection edge so the cut fades instead of ending abruptly (Select > Modify > Feather). Use 0 for pixel art. Steps of 0.1 px for fine edges." value={cur.feather} min={0} max={10} step={0.1} set={v => setCur({ feather: v })} suffix=" px" />

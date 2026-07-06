@@ -20,7 +20,7 @@ const SHORTCUTS = [
 
 const TIPS = [
   ['Click every background area', 'The wand only selects pixels connected to your click. Background split into pockets (between limbs, inside handles)? Click each pocket.'],
-  ['The recipe', 'Each click flood-selects at your tolerance, then the selection is contracted, smoothed, feathered and cleared — the classic Photoshop cleanup, automated.'],
+  ['The recipe', 'Each click flood-selects at its own tolerance (select a sample chip to retune just that click), then the selection is contracted, smoothed, feathered and cleared — the classic Photoshop cleanup, automated.'],
   ['Green / magenta screens', 'Switch Mode to Chroma key: the key color (default #00FF00 — no clicks needed) is removed at every brightness, shadows and enclosed pockets included, and its spill decontaminated from sprite edges and transparent pixels. Click the image to sample a different screen color.'],
   ['Soft shadows', 'Pixels that are a darkened version of the background you clicked come back as translucent black shadow — anchored to your wand clicks, so it works on any background color. Tune it with Strength.'],
   ['Keep / erase areas', 'Draw a lasso or box to protect details the wand eats, force-erase leftovers, or Subtract to carve a shape back out.'],

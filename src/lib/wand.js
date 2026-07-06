@@ -179,7 +179,9 @@ export function shadowDarkness(d, i, bg) {
   return Math.max(0, (1 - k) - SHADOW_NOISE_FLOOR) / (1 - SHADOW_NOISE_FLOOR);
 }
 
-// The full recipe. seeds: [{x, y}] in image pixels. Returns a fresh canvas.
+// The full recipe. seeds: [{x, y, tolerance?}] in image pixels — a seed may
+// carry its own tolerance (stamped at click time); opts.tolerance is the
+// fallback. Returns a fresh canvas.
 export function wandCutout(sourceCanvas, seeds, opts) {
   const {
     tolerance = 20, contract = 1, smooth = 2, feather = 1,
@@ -201,7 +203,7 @@ export function wandCutout(sourceCanvas, seeds, opts) {
     const y = Math.min(h - 1, Math.max(0, Math.round(s.y)));
     const i = (y * w + x) * 4;
     bgColors.push([d[i], d[i + 1], d[i + 2]]);
-    floodSelect(d, w, h, x, y, tolerance, sel);
+    floodSelect(d, w, h, x, y, s.tolerance ?? tolerance, sel);
   }
 
   if (contract) contractSel(sel, w, h, contract);
