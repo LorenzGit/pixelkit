@@ -27,6 +27,9 @@ export function CanvasStage({
   const [draft, setDraft] = useState([]);
   const [hoverPt, setHoverPt] = useState(null);
   const rectDrag = useRef(false);
+  // True only while a pan/pinch drag is actually moving the view, so the
+  // crosshair (color pick) cursor survives being zoomed in.
+  const [panning, setPanning] = useState(false);
 
   const W = originalCanvas?.width || 1, H = originalCanvas?.height || 1;
   const drawing = !!regionTool && tab === 'single' && !!img;
@@ -38,11 +41,25 @@ export function CanvasStage({
     const onWheel = e => {
       if (!img) return;
       e.preventDefault();
-      setZoom(z => +clamp(z * (e.deltaY < 0 ? 1.1 : 0.9), ZOOM_MIN, ZOOM_MAX).toFixed(2));
+      const next = +clamp(zoom * (e.deltaY < 0 ? 1.1 : 0.9), ZOOM_MIN, ZOOM_MAX).toFixed(2);
+      if (next === zoom) return;
+      // Shift pan so the image point under the cursor stays under the cursor.
+      // The transformed stage center sits at (untransformed center + pan), so
+      // the cursor's offset from the current rect center is all we need.
+      const r = compareRef.current?.getBoundingClientRect();
+      if (r && next > 1) {
+        const dx = e.clientX - (r.left + r.width / 2);
+        const dy = e.clientY - (r.top + r.height / 2);
+        const k = 1 - next / zoom;
+        setPan(p => clampPan({ x: p.x + dx * k, y: p.y + dy * k }, next));
+      } else if (next <= 1) {
+        setPan({ x: 0, y: 0 }); // panning is disabled at 1x, so don't strand an offset
+      }
+      setZoom(next);
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
-  }, [tab, img, setZoom]);
+  }); // re-bind each render so the handler sees the fresh zoom/pan
 
   // Reset any half-drawn shape when the tool changes or the image swaps.
   useEffect(() => { setDraft([]); setHoverPt(null); rectDrag.current = false; }, [regionTool, url]);
@@ -150,8 +167,10 @@ export function CanvasStage({
       const [a, b] = [...g.pointers.values()];
       const dist = Math.hypot(a.x - b.x, a.y - b.y);
       setZoom(+clamp(g.pinchZoom * (dist / g.pinchDist), ZOOM_MIN, ZOOM_MAX).toFixed(2));
+      setPanning(true);
     } else if (g.mode === 'pan') {
       setPan(clampPan({ x: g.panStart.x + (e.clientX - g.panStart.px), y: g.panStart.y + (e.clientY - g.panStart.py) }, zoom));
+      if (Math.hypot(e.clientX - g.panStart.px, e.clientY - g.panStart.py) > CLICK_SLOP_PX) setPanning(true);
     }
   }
 
@@ -169,6 +188,7 @@ export function CanvasStage({
     const wasClick = g.click?.ok && g.pointers.size === 1 && tab === 'single' && img && !regionTool;
     g.pointers.delete(e.pointerId);
     g.click = null;
+    if (g.pointers.size === 0) setPanning(false);
     if (wasClick) { wandPick(e); g.mode = null; return; }
     if (g.pointers.size === 0) { g.mode = null; return; }
     // Pinch dropped to one finger: hand the surviving pointer back to pan
@@ -201,7 +221,7 @@ export function CanvasStage({
   return (
     <div
       ref={previewRef}
-      className={'preview' + bgClass + (tab === 'single' ? ' single' : '') + (drawing || (img && tab === 'single' && zoom <= 1) ? ' picking' : '') + (!drawing && zoom > 1 ? ' grabbable' : '')}
+      className={'preview' + bgClass + (tab === 'single' ? ' single' : '') + (drawing || (img && tab === 'single') ? ' picking' : '') + (panning ? ' panning' : '')}
       style={bgStyle}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}

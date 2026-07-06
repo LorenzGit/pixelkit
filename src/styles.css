@@ -199,8 +199,7 @@ button:disabled { opacity: .4; cursor: not-allowed; }
 .preview { position: relative; flex: 1; min-height: 0; border-radius: var(--r-md); border: 1px solid var(--line); overflow: hidden; display: grid; place-items: center; padding: var(--s5); background: var(--bg0); }
 .preview.single { touch-action: none; }
 .preview.picking { cursor: crosshair; }
-.preview.grabbable { cursor: grab; }
-.preview.grabbable:active { cursor: grabbing; }
+.preview.panning { cursor: grabbing; } /* after .picking so a live drag wins over the crosshair */
 .bg-checker {
   background-image:
     linear-gradient(45deg, #262b36 25%, transparent 25%), linear-gradient(-45deg, #262b36 25%, transparent 25%),
