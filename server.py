@@ -30,6 +30,7 @@ MODELS = {
     "General Use (Light)": "ZhengPeng7/BiRefNet",
     "General Use (Light 2K)": "ZhengPeng7/BiRefNet_lite-2K",
     "General Use (Heavy)": "ZhengPeng7/BiRefNet_lite",
+    "General Use (HR)": "ZhengPeng7/BiRefNet_HR",
     "Matting": "ZhengPeng7/BiRefNet-matting",
     "Portrait": "ZhengPeng7/BiRefNet-portrait",
     "General Use (Dynamic)": "ZhengPeng7/BiRefNet_dynamic",

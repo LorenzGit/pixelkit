@@ -548,6 +548,7 @@ export default function App() {
                         <option>General Use (Light)</option>
                         <option>General Use (Light 2K)</option>
                         <option>General Use (Heavy)</option>
+                        <option>General Use (HR)</option>
                         <option>Matting</option>
                         <option>Portrait</option>
                         <option>General Use (Dynamic)</option>
@@ -557,6 +558,7 @@ export default function App() {
                       'General Use (Light)': 'Fastest general-purpose model; a good fallback for ordinary assets.',
                       'General Use (Light 2K)': 'Light model trained at 2K for larger source art.',
                       'General Use (Heavy)': 'Slower, more accurate general segmentation.',
+                      'General Use (HR)': 'Full model trained at 2048²; best edge quality in the family. Pair with 2048² resolution.',
                       Matting: 'Best default for antialiased UI edges, translucent details, and soft shadows.',
                       Portrait: 'Specialized for people, hair, and portrait edges.',
                       'General Use (Dynamic)': 'Handles varying image scales and unlocks the 2304² maximum.',
