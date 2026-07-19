@@ -20,10 +20,26 @@ export const CHROMA_DEFAULTS = {
   despillReach: 5,
   despillTone: 0,
 };
+// The sprite preset favours alpha quality over raw speed. 1024 keeps it
+// practical on PixelKit's CPU host while the matting weights and foreground
+// refinement preserve antialiased UI edges and soft contact shadows.
+export const BIREFNET_DEFAULTS = {
+  model: 'Matting',
+  operatingResolution: '1024x1024',
+  refineForeground: true,
+  outputMask: true,
+  maskOnly: false,
+  outputFormat: 'png',
+  recoverShadows: true,
+  shadowStrength: 100,
+  shadowTolerance: 12,
+  shadowSampling: 'auto',
+};
 export const DEFAULT_OPTS = {
-  mode: 'wand', // 'wand' (exact-color recipe) | 'chroma' (green/magenta screen)
+  mode: 'wand', // 'wand' | 'chroma' | 'birefnet'
   wand: { ...WAND_DEFAULTS },
   chroma: { ...CHROMA_DEFAULTS },
+  birefnet: { ...BIREFNET_DEFAULTS },
   shadow: true,
   shadowStrength: 100,
 };

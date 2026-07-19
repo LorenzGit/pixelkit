@@ -4,9 +4,10 @@ import {
   Layers, Trash2, RotateCcw, Boxes, Maximize2, SunMedium, Moon, Square,
   Hexagon, Crop, FileJson, FileArchive, Copy, HelpCircle, Clapperboard,
   Lasso, Undo2, Eye,
+  BrainCircuit, LockKeyhole, Play, ImageDown,
 } from 'lucide-react';
 
-import { clamp, rgbToHex, transparentPct } from './lib/color.js';
+import { clamp, hexToRgb, rgbToHex, transparentPct } from './lib/color.js';
 import { drawImageToCanvas, loadImage, dataURL, canvasToBlob, scaleCanvas, trimCanvas } from './lib/canvas.js';
 import { wandCutout } from './lib/wand.js';
 import { chromaCutout } from './lib/chroma.js';
@@ -16,7 +17,7 @@ import { buildZip, canvasToPngBytes, downloadBlob, downloadCanvas, strBytes } fr
 import { encodeAPNG } from './lib/apng.js';
 import {
   DEFAULT_OPTS, DEFAULT_GRID, DEFAULT_DETECT, DEFAULT_PACK,
-  PREVIEW_BG, ATLAS_FORMATS,
+  PREVIEW_BG, ATLAS_FORMATS, BIREFNET_DEFAULTS,
 } from './lib/presets.js';
 import { MASK_DEBOUNCE_MS } from './lib/constants.js';
 
@@ -58,6 +59,13 @@ function buildOverlay(result) {
   return c.toDataURL('image/png');
 }
 
+async function dataUriToCanvas(uri) {
+  const blob = await fetch(uri).then(r => r.blob());
+  const loaded = await loadImage(blob);
+  try { return drawImageToCanvas(loaded.img); }
+  finally { URL.revokeObjectURL(loaded.url); }
+}
+
 export default function App() {
   // Persisted settings ------------------------------------------------------
   const [opts, setOpts] = usePersistentState('pixelkit:v4:opts', DEFAULT_OPTS);
@@ -80,6 +88,11 @@ export default function App() {
   const [baseResult, setBaseResult] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  const [birefPassword, setBirefPassword] = useState('');
+  const [birefUnlocked, setBirefUnlocked] = useState(false);
+  const [birefMask, setBirefMask] = useState(null);
+  const [birefOriginal, setBirefOriginal] = useState(null);
+  const [birefElapsed, setBirefElapsed] = useState(0);
 
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -117,8 +130,8 @@ export default function App() {
   const originalCanvas = useMemo(() => (img ? drawImageToCanvas(img) : null), [img]);
 
   // The active mode's parameter block (each mode keeps its own tuning).
-  const modeKey = opts.mode === 'chroma' ? 'chroma' : 'wand';
-  const cur = opts[modeKey] || DEFAULT_OPTS[modeKey];
+  const modeKey = opts.mode === 'birefnet' ? 'birefnet' : (opts.mode === 'chroma' ? 'chroma' : 'wand');
+  const cur = { ...DEFAULT_OPTS[modeKey], ...(opts[modeKey] || {}) };
   const setCur = useCallback(
     patch => setOpts(o => ({ ...o, [modeKey]: { ...(o[modeKey] || DEFAULT_OPTS[modeKey]), ...patch } })),
     [modeKey, setOpts],
@@ -130,7 +143,7 @@ export default function App() {
     try {
       const loaded = await loadImage(f);
       setUrl(loaded.url); // previous URL is revoked by the cleanup effect below
-      setFile(f); setImg(loaded.img); setBaseResult(null); setError(null);
+      setFile(f); setImg(loaded.img); setBaseResult(null); setBirefMask(null); setBirefOriginal(null); setError(null);
       setZoom(1); setPan({ x: 0, y: 0 }); setExcluded({});
       setSeeds([]); setSelectedSeedId(null); setRegions([]); setRegionTool(null); setShowBefore(false);
     } catch {
@@ -144,6 +157,7 @@ export default function App() {
   // Live recompute of the wand recipe (debounced, cancellable) --------------
   useEffect(() => {
     if (!originalCanvas) { setBaseResult(null); return; }
+    if (opts.mode === 'birefnet') { setBaseResult(null); setBirefMask(null); setBirefOriginal(null); setBusy(false); return; }
     let cancelled = false;
     setBusy(true); setError(null);
     const t = setTimeout(() => {
@@ -161,6 +175,71 @@ export default function App() {
     }, MASK_DEBOUNCE_MS);
     return () => { cancelled = true; clearTimeout(t); };
   }, [originalCanvas, seeds, opts]);
+
+  useEffect(() => {
+    if (!busy || opts.mode !== 'birefnet') { setBirefElapsed(0); return undefined; }
+    const started = Date.now();
+    const timer = setInterval(() => setBirefElapsed(Math.floor((Date.now() - started) / 1000)), 1000);
+    return () => clearInterval(timer);
+  }, [busy, opts.mode]);
+
+  async function unlockBirefNet(e) {
+    e?.preventDefault();
+    setError(null);
+    try {
+      const response = await fetch('/api/birefnet/unlock', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: birefPassword }),
+      });
+      if (!response.ok) throw new Error(response.status === 401 ? 'Incorrect BiRefNet password.' : 'BiRefNet server is unavailable.');
+      setBirefUnlocked(true); flash('BiRefNet unlocked for this browser session');
+    } catch (err) { setError(err.message); }
+  }
+
+  async function runBirefNet() {
+    if (!originalCanvas || !birefUnlocked || busy) return;
+    setBusy(true); setError(null); setBirefMask(null);
+    try {
+      const blob = await canvasToBlob(originalCanvas, 'image/png');
+      const form = new FormData();
+      form.append('image', blob, file?.name || 'pixelkit.png');
+      form.append('model', cur.model);
+      form.append('operating_resolution', cur.operatingResolution);
+      form.append('refine_foreground_enabled', String(cur.refineForeground));
+      form.append('output_mask', String(cur.outputMask));
+      form.append('mask_only', String(cur.maskOnly));
+      form.append('output_format', cur.outputFormat);
+      form.append('recover_soft_shadows_enabled', String(cur.recoverShadows));
+      form.append('shadow_strength', String(cur.shadowStrength));
+      form.append('shadow_tolerance', String(cur.shadowTolerance));
+      form.append('shadow_auto_sample', String(cur.shadowSampling === 'auto'));
+      form.append('background_samples', JSON.stringify(seedInfo.map(s => hexToRgb(s.hex))));
+      const response = await fetch('/api/birefnet/remove', {
+        method: 'POST', headers: { 'X-PixelKit-Password': birefPassword }, body: form,
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        if (response.status === 401) setBirefUnlocked(false);
+        throw new Error(payload.detail || `BiRefNet failed (${response.status}).`);
+      }
+      const canvas = await dataUriToCanvas(payload.image);
+      setBaseResult(canvas); setBirefMask(payload.mask || null); setBirefOriginal(payload.image);
+      flash(`BiRefNet finished at ${cur.operatingResolution}`);
+    } catch (err) {
+      console.error('[PixelKit BiRefNet failed]', err);
+      setError(err.message || 'BiRefNet background removal failed.');
+    } finally { setBusy(false); }
+  }
+
+  async function downloadBirefMask() {
+    if (!birefMask) return;
+    downloadBlob(await fetch(birefMask).then(r => r.blob()), `${baseName()}-birefnet-mask.png`);
+  }
+
+  async function downloadBirefOriginal() {
+    if (!birefOriginal) return;
+    downloadBlob(await fetch(birefOriginal).then(r => r.blob()), `${baseName()}-birefnet.${cur.outputFormat}`);
+  }
 
   // Drawn regions are applied on top of the automatic mask, so tweaking a
   // shape never re-runs the wand recipe.
@@ -190,7 +269,7 @@ export default function App() {
   // clicking tunes exactly that click without re-flooding earlier ones.
   const addSeed = useCallback(pt => {
     const id = ++seedIdRef.current;
-    setSeeds(s => [...s, { ...pt, tolerance: cur.tolerance, id }]);
+    setSeeds(s => [...s, { ...pt, tolerance: cur.tolerance ?? 20, id }]);
     setSelectedSeedId(id);
     flash('Background sample added — drag Tolerance to tune it, Ctrl+Z undoes');
   }, [flash, cur.tolerance]);
@@ -439,8 +518,91 @@ export default function App() {
               options={[
                 ['wand', 'Magic wand', 'Photoshop magic-wand recipe: each click floods the exact clicked color within tolerance'],
                 ['chroma', 'Chroma key', 'Green / magenta screen: the key color (default #00FF00, or a click on the image) is removed at every brightness, shadows included, and its spill decontaminated from sprite edges'],
+                ['birefnet', 'BiRefNet v2', 'AI segmentation with specialized general, matting, portrait, heavy, 2K, and dynamic models'],
               ]}
             />
+            {opts.mode === 'birefnet' ? (
+              <>
+                {!birefUnlocked ? (
+                  <form className="passwordGate" onSubmit={unlockBirefNet}>
+                    <div className="gateTitle"><LockKeyhole size={15} /><span><b>BiRefNet is protected</b><small>The password applies only to AI inference.</small></span></div>
+                    <div className="passwordRow">
+                      <input type="password" value={birefPassword} onChange={e => setBirefPassword(e.target.value)} placeholder="Password" autoComplete="current-password" aria-label="BiRefNet password" />
+                      <button type="submit" disabled={!birefPassword}>Unlock</button>
+                    </div>
+                  </form>
+                ) : (
+                  <>
+                    <div className="aiUnlocked"><BrainCircuit size={14} /><span>AI inference unlocked</span><button type="button" onClick={() => { setBirefUnlocked(false); setBirefPassword(''); }}>Lock</button></div>
+                    <div className="presetCallout">
+                      <b>UI sprites + soft shadow</b>
+                      <span>Matting · 1024² · refined alpha · PNG + mask</span>
+                      <button type="button" onClick={() => setCur({ ...BIREFNET_DEFAULTS })}>Use recommended</button>
+                    </div>
+                    <label className="field">
+                      <span>Model profile</span>
+                      <select value={cur.model} onChange={e => {
+                        const model = e.target.value;
+                        setCur({ model, operatingResolution: cur.operatingResolution === '2304x2304' && model !== 'General Use (Dynamic)' ? '2048x2048' : cur.operatingResolution });
+                      }}>
+                        <option>General Use (Light)</option>
+                        <option>General Use (Light 2K)</option>
+                        <option>General Use (Heavy)</option>
+                        <option>General Use (HR)</option>
+                        <option>Matting</option>
+                        <option>Portrait</option>
+                        <option>General Use (Dynamic)</option>
+                      </select>
+                    </label>
+                    <p className="hint">{({
+                      'General Use (Light)': 'Fastest general-purpose model; a good fallback for ordinary assets.',
+                      'General Use (Light 2K)': 'Light model trained at 2K for larger source art.',
+                      'General Use (Heavy)': 'Slower, more accurate general segmentation.',
+                      'General Use (HR)': 'Full model trained at 2048²; best edge quality in the family. Pair with 2048² resolution.',
+                      Matting: 'Best default for antialiased UI edges, translucent details, and soft shadows.',
+                      Portrait: 'Specialized for people, hair, and portrait edges.',
+                      'General Use (Dynamic)': 'Handles varying image scales and unlocks the 2304² maximum.',
+                    })[cur.model]}</p>
+                    <Seg label="Operating resolution" tip="AI working size; larger is more detailed but much slower and needs much more RAM" value={cur.operatingResolution} set={v => setCur({ operatingResolution: v })} options={[
+                      ['1024x1024', '1024²', 'Recommended on this CPU host'],
+                      ['2048x2048', '2048²', 'High quality; can take several minutes on this host'],
+                      ...(cur.model === 'General Use (Dynamic)' ? [['2304x2304', '2304²', 'Maximum detail; highest memory risk']] : []),
+                    ]} />
+                    <Toggle checked={cur.refineForeground && !cur.maskOnly} onChange={v => setCur({ refineForeground: v })} tip="Mask-guided foreground color estimation cleans color contamination along translucent edges" >Refine foreground colors</Toggle>
+                    <Toggle checked={cur.outputMask} onChange={v => setCur({ outputMask: v })} tip="Also return the grayscale alpha mask for inspection or compositing">Return separate mask</Toggle>
+                    <Toggle checked={cur.maskOnly} onChange={v => setCur({ maskOnly: v, refineForeground: v ? false : cur.refineForeground })} tip="Return only the raw segmentation mask; skips foreground refinement">Mask-only mode</Toggle>
+                    <Seg label="Output format" value={cur.outputFormat} set={v => setCur({ outputFormat: v })} options={[
+                      ['png', 'PNG', 'Best for sprites and soft alpha'], ['webp', 'WebP', 'Smaller lossless file'], ['gif', 'GIF', 'Limited to 1-bit transparency'],
+                    ]} />
+                    {!cur.maskOnly && <div className="aiShadowOptions">
+                      <Toggle checked={cur.recoverShadows} onChange={v => setCur({ recoverShadows: v })} tip="Reconstruct neutral darkening outside the AI subject as portable translucent-black shadow">Recover soft shadows</Toggle>
+                      {cur.recoverShadows && <>
+                        <Range label="Shadow strength" tip="Opacity of the reconstructed shadow relative to its darkness on the original matte" value={cur.shadowStrength} min={0} max={200} set={v => setCur({ shadowStrength: v })} suffix="%" />
+                        <Range label="Color sensitivity" tip="How much color deviation a darkened background pixel may have and still count as shadow. Raise for noisy sheets; lower if dark artwork leaks into the shadow." value={cur.shadowTolerance} min={4} max={40} set={v => setCur({ shadowTolerance: v })} />
+                        <Seg label="Background sampling" value={cur.shadowSampling} set={v => setCur({ shadowSampling: v })} options={[
+                          ['auto', 'Auto border', 'Find dominant clean matte colors around the sheet border'],
+                          ['manual', 'Click samples', 'Click one or more clean, unshadowed background areas'],
+                        ]} />
+                        {cur.shadowSampling === 'manual' && <>
+                          <div className="keys">
+                            {!seedInfo.length && <span className="keyauto">Click a clean, unshadowed background area in the image.</span>}
+                            {seedInfo.map(s => <span className="keychip" key={s.id}>
+                              <i style={{ background: s.hex }} aria-hidden="true" /> {s.hex}
+                              <button type="button" onClick={() => setSeeds(ss => ss.filter(x => x.id !== s.id))} aria-label={`Remove shadow background sample ${s.hex}`}><Trash2 size={12} /></button>
+                            </span>)}
+                          </div>
+                          {!!seedInfo.length && <button type="button" className="ghost" onClick={() => setSeeds([])}><Trash2 size={13} /> Clear samples</button>}
+                        </>}
+                      </>}
+                    </div>}
+                    <button type="button" className="wide aiRun" disabled={!img || busy} onClick={runBirefNet}><Play size={14} /> {busy ? `Running BiRefNet… ${birefElapsed}s` : 'Remove background with BiRefNet'}</button>
+                    {birefOriginal && <button type="button" className="wide" onClick={downloadBirefOriginal}><Download size={14} /> Download BiRefNet {cur.outputFormat.toUpperCase()}</button>}
+                    {birefMask && <button type="button" className="wide" onClick={downloadBirefMask}><ImageDown size={14} /> Download alpha mask</button>}
+                    <p className="hint privacyNote">The image is sent only to this PixelKit server. The first run for each profile downloads and caches its model weights.</p>
+                  </>
+                )}
+              </>
+            ) : (<>
             {opts.mode === 'chroma' ? (
               <p className="hint">The key color below is removed automatically — every brightness of it, shadows included. Click the image background to sample a different screen color instead. Edges and removed pixels are decontaminated, so no green/magenta trace survives.</p>
             ) : (
@@ -505,15 +667,16 @@ export default function App() {
               <Range label="Decontaminate reach" tip="How many pixels deep inside the sprite the spill cleanup extends. Keep it small so genuinely green/magenta details away from the edge are never desaturated." value={cur.despillReach} min={1} max={10} set={v => setCur({ despillReach: v })} suffix=" px" />
               <Range label="Decontaminate tone" tip="Brightness of the neutralized screen color at edges. 100% keeps the pixel's original brightness; lower darkens the decontaminated fringe toward black (good over dark game scenes), higher lifts it toward white. Only key-tinted pixels shift." value={cur.despillTone} min={0} max={200} set={v => setCur({ despillTone: v })} suffix="%" />
             </>}
+            </>)}
           </Section>
 
-          <Section title="Soft shadow" icon={<Moon size={15} />}>
+          {opts.mode !== 'birefnet' && <Section title="Soft shadow" icon={<Moon size={15} />}>
             <Toggle tip="Pixels that are a darkened version of the background you clicked come back as translucent black shadow. Anchored to your wand clicks, so it works on gray, white — any background." checked={opts.shadow} onChange={v => setOpts({ ...opts, shadow: v })}>Keep soft shadow layer</Toggle>
             {opts.shadow && (
               <Range label="Strength" tip="Shadow opacity relative to how much darker the pixel is than your clicked background. 100% reproduces the original shadow exactly; lower fades it, higher deepens it." value={opts.shadowStrength} min={0} max={200} set={v => setOpts({ ...opts, shadowStrength: v })} suffix="%" />
             )}
             <p className="hint">Click the shadow tones with the wand too — the shadow layer rebuilds them as clean translucent black. Only neutral darkenings of the clicked background qualify, so colored elements can’t sneak back in.</p>
-          </Section>
+          </Section>}
 
           {tab === 'single' && (
             <Section title="Keep / erase areas" icon={<Lasso size={15} />}>
@@ -615,7 +778,9 @@ export default function App() {
             tab={tab} img={img} url={url} resultUrl={resultUrl} overlayUrl={overlayUrl} originalCanvas={originalCanvas}
             previewBg={previewBg} zoom={zoom} setZoom={setZoom} pan={pan} setPan={setPan}
             pixelView={pixelView} maskOverlay={maskOverlay} showBefore={showBefore} beforeHold={beforeHold}
-            onWandPick={addSeed} showWandHint={!!img && seeds.length === 0 && opts.mode !== 'chroma'}
+            onWandPick={opts.mode === 'birefnet' && cur.shadowSampling !== 'manual' ? null : addSeed}
+            showWandHint={!!img && seeds.length === 0 && (opts.mode === 'wand' || (opts.mode === 'birefnet' && cur.recoverShadows && cur.shadowSampling === 'manual'))}
+            wandHint={opts.mode === 'birefnet' ? 'Click a clean, unshadowed background area to anchor soft-shadow recovery' : undefined}
             regions={regions} regionTool={regionTool} regionEffect={regionEffect}
             onAddRegion={r => setRegions(rs => [...rs, r])} onExitTool={() => setRegionTool(null)}
             activeFrames={activeFrames} sheetMode={sheetMode} frameSize={frameSize} isExcluded={isExcluded} toggleExclude={toggleExclude}

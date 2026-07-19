@@ -1,0 +1,17 @@
+# Install the CPU PyTorch wheel first on CPU-only hosts (see README).
+torch>=2.5.0
+torchvision
+transformers>=4.45
+huggingface-hub>0.25
+safetensors
+timm
+einops
+kornia
+scipy
+scikit-image
+numpy<2
+opencv-python-headless
+Pillow
+fastapi
+uvicorn[standard]
+python-multipart

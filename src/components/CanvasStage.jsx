@@ -14,7 +14,7 @@ export function CanvasStage({
   tab, img, url, resultUrl, overlayUrl, originalCanvas,
   previewBg, zoom, setZoom, pan, setPan,
   pixelView, maskOverlay, showBefore, beforeHold,
-  onWandPick, showWandHint,
+  onWandPick, showWandHint, wandHint,
   regions, regionTool, regionEffect, onAddRegion, onExitTool,
   activeFrames, sheetMode, frameSize, isExcluded, toggleExclude,
   busy,
@@ -303,7 +303,7 @@ export function CanvasStage({
       )}
 
       {!drawing && showWandHint && tab === 'single' && (
-        <div className="drawhint" role="status">Click a background area to remove it — the magic wand selects everything connected of that color</div>
+        <div className="drawhint" role="status">{wandHint || 'Click a background area to remove it — the magic wand selects everything connected of that color'}</div>
       )}
 
       {busy && (
