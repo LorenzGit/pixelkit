@@ -78,8 +78,9 @@ def load_model(model_id: str):
     return loaded_model
 
 
-def refine_foreground(image: Image.Image, mask: Image.Image, radius: int = 90) -> Image.Image:
-    """Official BiRefNet/fast-foreground-estimation CPU refinement recipe."""
+def refine_foreground(image: Image.Image, mask: Image.Image, radius: int = 90,
+                      strength: float = 100, tone: float = 100) -> Image.Image:
+    """BiRefNet foreground refinement with adjustable cleanup strength and tone."""
     rgb = np.asarray(image, dtype=np.float32) / 255.0
     alpha = np.asarray(mask, dtype=np.float32)[:, :, None] / 255.0
 
@@ -94,7 +95,22 @@ def refine_foreground(image: Image.Image, mask: Image.Image, radius: int = 90) -
 
     foreground, background = pass_once(rgb, rgb, radius)
     foreground, _ = pass_once(foreground, background, 6)
-    return Image.fromarray((foreground * 255).astype(np.uint8), "RGB")
+
+    # The official estimate is the 100% / neutral-tone baseline. Strength
+    # blends back toward the source, while tone shifts only pixels whose RGB
+    # was actually corrected. This avoids tinting clean opaque artwork.
+    amount = np.clip(strength / 100.0, 0, 1)
+    if amount >= 1:
+        corrected = foreground.copy()
+    elif amount <= 0:
+        corrected = rgb.copy()
+    else:
+        corrected = rgb + (foreground - rgb) * amount
+    tone_delta = np.clip((tone - 100) / 100.0, -1, 1)
+    if tone_delta and amount:
+        correction = np.max(np.abs(foreground - rgb), axis=2, keepdims=True) * amount
+        corrected += tone_delta * correction
+    return Image.fromarray((np.clip(corrected, 0, 1) * 255).astype(np.uint8), "RGB")
 
 
 def sample_border_palette(image: Image.Image, max_colors: int = 4) -> list[list[int]]:
@@ -161,6 +177,7 @@ def encode_image(image: Image.Image, output_format: str) -> tuple[str, str]:
 
 
 def infer(source: Image.Image, model_name: str, resolution: str, refine: bool,
+          decontaminate: float, decontaminate_tone: float,
           output_mask: bool, mask_only: bool, output_format: str,
           recover_shadows: bool = False, shadow_strength: float = 100,
           shadow_tolerance: int = 12, background_samples: list[list[int]] | None = None,
@@ -186,7 +203,12 @@ def infer(source: Image.Image, model_name: str, resolution: str, refine: bool,
     if mask_only:
         result = mask.convert("RGBA")
     else:
-        foreground = refine_foreground(source_rgb, mask) if refine else source_rgb
+        foreground = (
+            refine_foreground(
+                source_rgb, mask, strength=decontaminate, tone=decontaminate_tone
+            )
+            if refine else source_rgb
+        )
         result = foreground.convert("RGBA")
         result.putalpha(mask)
         if recover_shadows:
@@ -206,6 +228,8 @@ async def remove_background(
     model: Annotated[str, Form()] = "Matting",
     operating_resolution: Annotated[str, Form()] = "1024x1024",
     refine_foreground_enabled: Annotated[bool, Form()] = True,
+    decontaminate: Annotated[float, Form()] = 100,
+    decontaminate_tone: Annotated[float, Form()] = 100,
     output_mask: Annotated[bool, Form()] = True,
     mask_only: Annotated[bool, Form()] = False,
     output_format: Annotated[str, Form()] = "png",
@@ -240,6 +264,8 @@ async def remove_background(
         samples = [[max(0, min(255, int(v))) for v in c[:3]] for c in samples[:8]]
     except (TypeError, ValueError, json.JSONDecodeError) as exc:
         raise HTTPException(status_code=422, detail="Invalid background samples") from exc
+    if not 0 <= decontaminate <= 100 or not 0 <= decontaminate_tone <= 200:
+        raise HTTPException(status_code=422, detail="Invalid decontamination settings")
     if not 0 <= shadow_tolerance <= 64 or not 0 <= shadow_strength <= 200:
         raise HTTPException(status_code=422, detail="Invalid soft-shadow settings")
 
@@ -247,6 +273,7 @@ async def remove_background(
         try:
             return await asyncio.to_thread(
                 infer, source, model, operating_resolution, refine_foreground_enabled,
+                decontaminate, decontaminate_tone,
                 output_mask, mask_only, output_format,
                 recover_soft_shadows_enabled and not mask_only, shadow_strength,
                 shadow_tolerance, samples, shadow_auto_sample

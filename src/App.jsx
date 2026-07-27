@@ -206,6 +206,8 @@ export default function App() {
       form.append('model', cur.model);
       form.append('operating_resolution', cur.operatingResolution);
       form.append('refine_foreground_enabled', String(cur.refineForeground));
+      form.append('decontaminate', String(cur.decontaminate));
+      form.append('decontaminate_tone', String(cur.decontaminateTone));
       form.append('output_mask', String(cur.outputMask));
       form.append('mask_only', String(cur.maskOnly));
       form.append('output_format', cur.outputFormat);
@@ -569,6 +571,10 @@ export default function App() {
                       ...(cur.model === 'General Use (Dynamic)' ? [['2304x2304', '2304²', 'Maximum detail; highest memory risk']] : []),
                     ]} />
                     <Toggle checked={cur.refineForeground && !cur.maskOnly} onChange={v => setCur({ refineForeground: v })} tip="Mask-guided foreground color estimation cleans color contamination along translucent edges" >Refine foreground colors</Toggle>
+                    {cur.refineForeground && !cur.maskOnly && <>
+                      <Range label="Decontaminate" tip="Strength of BiRefNet's mask-guided edge-color cleanup. 0% keeps the source colors; 100% removes the estimated background contamination." value={cur.decontaminate} min={0} max={100} set={v => setCur({ decontaminate: v })} suffix="%" />
+                      <Range label="Decontaminate tone" tip="Brightness of the color correction on contaminated edges. 100% preserves the refined brightness; lower darkens the corrected fringe and higher lifts it. Unchanged colors are untouched." value={cur.decontaminateTone} min={0} max={200} set={v => setCur({ decontaminateTone: v })} suffix="%" />
+                    </>}
                     <Toggle checked={cur.outputMask} onChange={v => setCur({ outputMask: v })} tip="Also return the grayscale alpha mask for inspection or compositing">Return separate mask</Toggle>
                     <Toggle checked={cur.maskOnly} onChange={v => setCur({ maskOnly: v, refineForeground: v ? false : cur.refineForeground })} tip="Return only the raw segmentation mask; skips foreground refinement">Mask-only mode</Toggle>
                     <Seg label="Output format" value={cur.outputFormat} set={v => setCur({ outputFormat: v })} options={[

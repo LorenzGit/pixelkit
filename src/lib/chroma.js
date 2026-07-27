@@ -31,15 +31,14 @@
 /* ------------------------------------------------------------------ */
 import { hexToRgb, luminance, transparentPct } from './color.js';
 import { contractSel, smoothSel, blurSel } from './wand.js';
-import { CHROMA_DARK_FLOOR, SHADOW_NOISE_FLOOR } from './constants.js';
+import { CHROMA_DARK_FLOOR, CHROMA_MIN_EVIDENCE, SHADOW_NOISE_FLOOR } from './constants.js';
 
 // Residual of pixel i against the best neutral re-lighting s·K of key K
 // (least-squares scale, max per-channel remainder — same units as the wand
 // tolerance). Dark pixels carry almost no chroma signal, so the residual is
 // judged against at least CHROMA_DARK_FLOOR of the key's brightness —
 // otherwise near-black object pixels read as deep key shadow and get eaten.
-function keyResidual(d, i, K, KK) {
-  const r = d[i], g = d[i + 1], b = d[i + 2];
+function keyResidual(r, g, b, K, KK) {
   let s = (r * K[0] + g * K[1] + b * K[2]) / KK;
   if (s < 0) s = 0;
   const res = Math.max(
@@ -50,6 +49,24 @@ function keyResidual(d, i, K, KK) {
   return res / Math.max(CHROMA_DARK_FLOOR, Math.min(1, s));
 }
 
+// Per-pixel key confidence. Residual measures hue agreement, while evidence
+// rejects the zero-chroma ambiguity: pure black mathematically matches every
+// scaled key, but contains no color evidence that it is actually screen.
+// Exported for focused regression tests.
+export function chromaSelectionValue(r, g, b, K, tolerance, keyNorm = null) {
+  const KK = keyNorm ?? Math.max(1, K[0] * K[0] + K[1] * K[1] + K[2] * K[2]);
+  const tol = Math.max(0, tolerance);
+  const soft = Math.max(1, tol);
+  const res = keyResidual(r, g, b, K, KK);
+  let match = 0;
+  if (res <= tol) match = 1;
+  else if (res < tol + soft) match = 1 - (res - tol) / soft;
+  if (match <= 0) return 0;
+  const chromaEvidence = Math.max(r, g, b) - Math.min(r, g, b);
+  const evidence = Math.min(1, chromaEvidence / CHROMA_MIN_EVIDENCE);
+  return Math.round(255 * match * evidence);
+}
+
 // Global key selection with the luma-invariant metric: one click selects
 // every brightness of the screen color EVERYWHERE in the image — shadows,
 // vignette and enclosed pockets a contiguous flood could never reach.
@@ -57,13 +74,9 @@ function keyResidual(d, i, K, KK) {
 // selection over a second tolerance band, like the wand's flood edge.
 function selectKey(d, w, h, K, tolerance, sel) {
   const KK = Math.max(1, K[0] * K[0] + K[1] * K[1] + K[2] * K[2]);
-  const tol = Math.max(0, tolerance);
-  const soft = Math.max(1, tol); // AA band width beyond the hard tolerance
   for (let p = 0, i = 0; p < sel.length; p++, i += 4) {
-    const res = keyResidual(d, i, K, KK);
-    if (res <= tol) { sel[p] = 255; continue; }
-    const frac = 1 - (res - tol) / soft;
-    if (frac > 0) { const v = Math.round(255 * frac); if (v > sel[p]) sel[p] = v; }
+    const v = chromaSelectionValue(d[i], d[i + 1], d[i + 2], K, tolerance, KK);
+    if (v > sel[p]) sel[p] = v;
   }
 }
 

@@ -28,7 +28,12 @@ export const SHADOW_NOISE_FLOOR = 0.03;
 // residual against the scaled key is judged against at least this fraction
 // of the key's brightness (stops near-black object pixels reading as deep
 // key shadow).
-export const CHROMA_DARK_FLOOR = 0.35;
+export const CHROMA_DARK_FLOOR = 0.08;
+// Completely neutral black has zero residual against every scaled key.
+// Require a small amount of observable chroma before assigning alpha so
+// black outlines and dark hair remain foreground. The ramp up to this value
+// keeps genuinely key-coloured deep shadows softly selected.
+export const CHROMA_MIN_EVIDENCE = 4;
 
 // Packed-atlas sprite detection defaults.
 export const ATLAS_DEFAULTS = { alphaThreshold: 72, minArea: 320, mergeDistance: 2, padding: 24 };

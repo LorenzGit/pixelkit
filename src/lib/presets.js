@@ -27,6 +27,8 @@ export const BIREFNET_DEFAULTS = {
   model: 'Matting',
   operatingResolution: '1024x1024',
   refineForeground: true,
+  decontaminate: 100,
+  decontaminateTone: 100,
   outputMask: true,
   maskOnly: false,
   outputFormat: 'png',

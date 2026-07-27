@@ -13,7 +13,7 @@ Magic-wand and chroma processing run entirely in the browser. The optional BiRef
 - Exposed refine controls for tolerance, contract, smooth, feather, and chroma despill.
 - Optional soft-shadow recovery for neutral darkening on cleared background pixels.
 - Password-gated local BiRefNet v2 inference with Light, Light 2K, Heavy, HR, Matting, Portrait, and Dynamic profiles.
-- BiRefNet 1024/2048/2304 operating sizes, foreground refinement, mask export/mask-only, and PNG/WebP/GIF output.
+- BiRefNet 1024/2048/2304 operating sizes, adjustable edge decontamination and tone, mask export/mask-only, and PNG/WebP/GIF output.
 - Optional BiRefNet soft-shadow recovery with automatic border sampling or manually clicked background samples, adjustable strength, and color sensitivity.
 - Keep, erase, and subtract regions for manual lasso or rectangle corrections.
 - Mask overlay, before/after preview, pan, zoom, and checker/dark/light/magenta backgrounds.
