@@ -3,8 +3,8 @@ import {
   Upload, Download, Grid3X3, Image as ImageIcon, Scissors, Sparkles, Wand2,
   Layers, Trash2, RotateCcw, Boxes, Maximize2, SunMedium, Moon, Square,
   Hexagon, Crop, FileJson, FileArchive, Copy, HelpCircle, Clapperboard,
-  Lasso, Undo2, Eye,
-  BrainCircuit, LockKeyhole, Play, ImageDown,
+  Lasso, Undo2, Eye, Film, LayoutGrid,
+  BrainCircuit, LockKeyhole, Play, Pause, ImageDown,
 } from 'lucide-react';
 
 import { clamp, hexToRgb, rgbToHex, transparentPct } from './lib/color.js';
@@ -15,15 +15,19 @@ import { applyRegions } from './lib/regions.js';
 import { packAtlas, autoDetectGrid, extractPackedSprites } from './lib/atlas.js';
 import { buildZip, canvasToPngBytes, downloadBlob, downloadCanvas, strBytes } from './lib/zip.js';
 import { encodeAPNG } from './lib/apng.js';
+import { loadVideo, releaseVideo, extractVideoFrames, frameTimes, thumbnailURL, formatTime } from './lib/video.js';
+import { sheetLayout, drawSpriteSheet, sheetFrameRecords } from './lib/sheet.js';
 import {
-  DEFAULT_OPTS, DEFAULT_GRID, DEFAULT_DETECT, DEFAULT_PACK,
+  DEFAULT_OPTS, DEFAULT_GRID, DEFAULT_DETECT, DEFAULT_PACK, DEFAULT_VIDEO, DEFAULT_SHEET,
   PREVIEW_BG, ATLAS_FORMATS, BIREFNET_DEFAULTS,
 } from './lib/presets.js';
-import { MASK_DEBOUNCE_MS } from './lib/constants.js';
+import { MASK_DEBOUNCE_MS, MAX_VIDEO_FRAMES, VIDEO_THUMB_PX } from './lib/constants.js';
 
 import { usePersistentState } from './hooks/usePersistentState.js';
 import { Section, Range, Seg, Toggle } from './components/controls.jsx';
 import { CanvasStage } from './components/CanvasStage.jsx';
+import { VideoStage } from './components/VideoStage.jsx';
+import { SheetAnimation } from './components/SheetAnimation.jsx';
 import { AnimPreview } from './components/AnimPreview.jsx';
 import { HelpOverlay } from './components/HelpOverlay.jsx';
 
@@ -79,6 +83,8 @@ export default function App() {
   const [pixelView, setPixelView] = usePersistentState('pixelkit:v1:pixelView', false);
   const [lockFrameBox, setLockFrameBox] = usePersistentState('pixelkit:v1:lockFrameBox', false);
   const [atlasFormat, setAtlasFormat] = usePersistentState('pixelkit:v1:atlasFormat', 'texturepacker');
+  const [videoOpts, setVideoOpts] = usePersistentState('pixelkit:v1:video', DEFAULT_VIDEO);
+  const [sheetOpts, setSheetOpts] = usePersistentState('pixelkit:v1:sheet', DEFAULT_SHEET);
 
   // Session state -----------------------------------------------------------
   const [tab, setTab] = useState('single');
@@ -117,6 +123,23 @@ export default function App() {
   const [onion, setOnion] = useState(false);
 
   const [excluded, setExcluded] = useState({});
+
+  // Video → sheet workspace (per video, not persisted). rawFrames holds one
+  // full-size canvas per sampled timestamp; cutFrames holds what survived the
+  // removal + trim pass, keyed back to the raw frame index.
+  const [videoFile, setVideoFile] = useState(null);
+  const [videoEl, setVideoEl] = useState(null); // the live <video>, mounted by the stage
+  const [videoMeta, setVideoMeta] = useState(null); // { duration, width, height }
+  const [range, setRange] = useState({ start: 0, end: 0 });
+  const [rawFrames, setRawFrames] = useState([]);
+  const [cutFrames, setCutFrames] = useState([]);
+  const [frameOff, setFrameOff] = useState({}); // raw index → left out of the sheet
+  const [previewIndex, setPreviewIndex] = useState(0);
+  const [videoView, setVideoView] = useState('video');
+  const [progress, setProgress] = useState(null); // { label, done, total }
+  const videoRef = useRef(null);
+  const cancelRef = useRef(false);
+
   const [showHelp, setShowHelp] = useState(false);
   const [toast, setToast] = useState(null);
   const toastTimer = useRef();
@@ -127,7 +150,14 @@ export default function App() {
     toastTimer.current = setTimeout(() => setToast(null), 1800);
   }, []);
 
-  const originalCanvas = useMemo(() => (img ? drawImageToCanvas(img) : null), [img]);
+  // The video workspace feeds the frame under inspection into the very same
+  // removal pipeline as a still image, so every wand / chroma / shadow control
+  // previews live on a real frame before the whole clip is processed.
+  const previewFrame = rawFrames.length ? rawFrames[Math.min(previewIndex, rawFrames.length - 1)] : null;
+  const originalCanvas = useMemo(
+    () => (tab === 'video' ? previewFrame?.canvas || null : (img ? drawImageToCanvas(img) : null)),
+    [img, tab, previewFrame],
+  );
 
   // The active mode's parameter block (each mode keeps its own tuning).
   const modeKey = opts.mode === 'birefnet' ? 'birefnet' : (opts.mode === 'chroma' ? 'chroma' : 'wand');
@@ -138,20 +168,48 @@ export default function App() {
   );
 
   // File input --------------------------------------------------------------
+  // A video and an image are mutually exclusive sources: loading either one
+  // clears the other so the pipeline only ever has one thing to work on.
+  const onVideoFile = useCallback(async (f) => {
+    setError(null); setBusy(true);
+    try {
+      const handle = await loadVideo(f);
+      releaseVideo(videoRef.current);
+      videoRef.current = handle;
+      setVideoFile(f); setVideoEl(handle.video);
+      setVideoMeta({ duration: handle.duration, width: handle.width, height: handle.height });
+      setRange({ start: 0, end: +handle.duration.toFixed(2) });
+      setRawFrames([]); setCutFrames([]);
+      setFrameOff({}); setPreviewIndex(0); setVideoView('video');
+      setFile(null); setImg(null); setUrl(null); setBaseResult(null); setBirefMask(null); setBirefOriginal(null);
+      setSeeds([]); setSelectedSeedId(null); setRegions([]); setRegionTool(null); setShowBefore(false);
+      setTab('video');
+    } catch (err) {
+      console.error('[PixelKit video open failed]', err);
+      setError(err.message || 'Could not open that video.');
+    } finally { setBusy(false); }
+  }, []);
+
   const onFile = useCallback(async (f) => {
-    if (!f || !f.type.startsWith('image/')) return;
+    if (!f) return;
+    if (f.type.startsWith('video/')) { onVideoFile(f); return; }
+    if (!f.type.startsWith('image/')) return;
     try {
       const loaded = await loadImage(f);
       setUrl(loaded.url); // previous URL is revoked by the cleanup effect below
       setFile(f); setImg(loaded.img); setBaseResult(null); setBirefMask(null); setBirefOriginal(null); setError(null);
       setZoom(1); setPan({ x: 0, y: 0 }); setExcluded({});
       setSeeds([]); setSelectedSeedId(null); setRegions([]); setRegionTool(null); setShowBefore(false);
+      setVideoFile(null); setVideoEl(null); setVideoMeta(null); setRawFrames([]); setCutFrames([]);
+      releaseVideo(videoRef.current); videoRef.current = null;
+      if (tab === 'video') setTab('single');
     } catch {
       setError('Could not open that image.');
     }
-  }, []);
+  }, [onVideoFile, tab]);
 
   useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
+  useEffect(() => () => releaseVideo(videoRef.current), []);
   useEffect(() => { if (zoom <= 1 && (pan.x || pan.y)) setPan({ x: 0, y: 0 }); }, [zoom]); // eslint-disable-line
 
   // Live recompute of the wand recipe (debounced, cancellable) --------------
@@ -339,8 +397,131 @@ export default function App() {
     [lockFrameBox, exportFrames],
   );
 
+  // Video → sheet -----------------------------------------------------------
+  // The inspected frame falls back to the raw frame whenever the recipe has no
+  // result yet (BiRefNet mode, or the very first debounce tick).
+  const framePreviewUrl = useMemo(
+    () => (tab !== 'video' ? null : resultUrl || (previewFrame ? dataURL(previewFrame.canvas) : null)),
+    [tab, resultUrl, previewFrame],
+  );
+
+  const isFrameOff = useCallback(f => !!frameOff[f.index], [frameOff]);
+  const toggleFrame = useCallback(f => setFrameOff(o => ({ ...o, [f.index]: !o[f.index] })), []);
+  const selectedRaw = useMemo(() => rawFrames.filter(f => !frameOff[f.index]), [rawFrames, frameOff]);
+
+  // The sheet is laid out from the CURRENT selection, so excluding a frame
+  // after the fact re-packs the grid — and if the widest or tallest frame was
+  // the one excluded, every cell shrinks with it.
+  const sheetFrames = useMemo(() => cutFrames.filter(f => !frameOff[f.index]), [cutFrames, frameOff]);
+  const sheet = useMemo(() => {
+    const layout = sheetLayout(sheetFrames, sheetOpts);
+    return layout ? { ...layout, canvas: drawSpriteSheet(layout) } : null;
+  }, [sheetFrames, sheetOpts]);
+
+  // Before the removal pass there is nothing cut to animate, but the kept raw
+  // frames can still be played back — so frame picking has a preview from the
+  // moment frames exist, instead of only after a build.
+  const rawPreview = useMemo(() => {
+    if (cutFrames.length || !selectedRaw.length) return null;
+    const cellW = selectedRaw[0].canvas.width, cellH = selectedRaw[0].canvas.height;
+    return {
+      raw: true, cellW, cellH,
+      cells: selectedRaw.map((f, i) => ({ index: i, frame: { canvas: f.canvas, w: cellW, h: cellH }, ox: 0, oy: 0 })),
+    };
+  }, [cutFrames.length, selectedRaw]);
+
+  // What the docks and the sidebar play: the packed sheet once it exists,
+  // the raw kept frames until then.
+  const preview = sheet || rawPreview;
+
+  const plannedFrames = useMemo(
+    () => (videoMeta ? frameTimes({ ...range, fps: videoOpts.fps, maxFrames: MAX_VIDEO_FRAMES }).length : 0),
+    [videoMeta, range, videoOpts.fps],
+  );
+
+  async function extractFrames() {
+    const handle = videoRef.current;
+    if (!handle || progress) return;
+    const times = frameTimes({ ...range, fps: videoOpts.fps, maxFrames: MAX_VIDEO_FRAMES });
+    if (!times.length) { flash('That range is empty'); return; }
+    cancelRef.current = false;
+    setError(null);
+    setProgress({ label: 'Extracting frame', done: 0, total: times.length });
+    try {
+      const frames = await extractVideoFrames(handle.video, {
+        times, scale: videoOpts.scale, thumbSize: VIDEO_THUMB_PX,
+        onProgress: (done, total) => setProgress({ label: 'Extracting frame', done, total }),
+        isCancelled: () => cancelRef.current,
+      });
+      setRawFrames(frames); setCutFrames([]);
+      setFrameOff({}); setPreviewIndex(0); setVideoView('frames');
+      flash(`${frames.length} frame${frames.length === 1 ? '' : 's'} extracted — tune the removal, then build`);
+    } catch (err) {
+      console.error('[PixelKit video extraction failed]', err);
+      setError(err.message || 'Could not read frames from that video.');
+    } finally { setProgress(null); }
+  }
+
+  // Cut and trim EVERY extracted frame, not just the kept ones: once they are
+  // all processed, keeping or dropping a frame re-packs the sheet and the
+  // animation instantly with no second pass. Sequential with a yield between
+  // frames, since each cutout is a full-image pass — that keeps the progress
+  // bar and the Stop button alive instead of freezing the tab for a minute.
+  async function buildSheet() {
+    if (!rawFrames.length || progress || opts.mode === 'birefnet') return;
+    cancelRef.current = false;
+    setError(null);
+    setProgress({ label: 'Removing background from frame', done: 0, total: rawFrames.length });
+    const cutout = opts.mode === 'chroma' ? chromaCutout : wandCutout;
+    const cuts = [];
+    let processed = 0;
+    try {
+      for (let i = 0; i < rawFrames.length; i++) {
+        if (cancelRef.current) break;
+        const f = rawFrames[i];
+        const cut = cutout(f.canvas, seeds, { ...cur, shadow: opts.shadow, shadowStrength: opts.shadowStrength }).canvas;
+        const trimmed = trimCanvas(regions.length ? applyRegions(cut, f.canvas, regions) : cut);
+        processed++;
+        if (trimmed) {
+          cuts.push({
+            index: f.index, time: f.time, canvas: trimmed.canvas, w: trimmed.w, h: trimmed.h,
+            // Where this frame sat in the source — what keeps the animation
+            // from wobbling when the frames are packed (see lib/sheet.js).
+            x: trimmed.x, y: trimmed.y,
+            thumb: thumbnailURL(trimmed.canvas, VIDEO_THUMB_PX),
+          });
+        }
+        setProgress({ label: 'Removing background from frame', done: i + 1, total: rawFrames.length });
+        await new Promise(r => setTimeout(r, 0));
+      }
+      setCutFrames(cuts);
+      if (cuts.length) setVideoView('sheet');
+      const empty = processed - cuts.length;
+      flash(cuts.length
+        ? `${cuts.length} frame${cuts.length === 1 ? '' : 's'} cut and trimmed${empty ? ` · ${empty} came out empty` : ''}`
+        : 'Every frame came out empty — the removal is eating the subject');
+    } catch (err) {
+      console.error('[PixelKit sheet build failed]', err);
+      setError('Background removal failed on one of the frames.');
+    } finally { setProgress(null); }
+  }
+
+  const selectAllFrames = useCallback(() => setFrameOff({}), []);
+  const selectNoFrames = useCallback(
+    () => setFrameOff(Object.fromEntries(rawFrames.map(f => [f.index, true]))),
+    [rawFrames],
+  );
+  const invertFrames = useCallback(
+    () => setFrameOff(o => Object.fromEntries(rawFrames.map(f => [f.index, !o[f.index]]))),
+    [rawFrames],
+  );
+
+  // Trim handles driven by the player's own playhead.
+  const setRangeStart = useCallback(t => setRange(r => ({ ...r, start: Math.min(+t.toFixed(2), r.end) })), []);
+  const setRangeEnd = useCallback(t => setRange(r => ({ ...r, end: Math.max(+t.toFixed(2), r.start) })), []);
+
   // Helpers -----------------------------------------------------------------
-  const baseName = () => (file?.name?.replace(/\.[^.]+$/, '') || 'pixelkit');
+  const baseName = () => ((tab === 'video' ? videoFile?.name : file?.name)?.replace(/\.[^.]+$/, '') || 'pixelkit');
   const scaledForExport = c => scaleCanvas(c, exportScale, pixelView);
   const frameSize = sheetMode === 'packed' ? 86 : Math.min(96, Math.max(28, 560 / grid.cols));
 
@@ -364,7 +545,8 @@ export default function App() {
 
   async function copyResult() {
     let c = null;
-    if (tab === 'single' && result) c = scaledForExport(trimExport ? (trimCanvas(result)?.canvas || result) : result);
+    if (tab === 'video') c = sheet ? scaledForExport(sheet.canvas) : null;
+    else if (tab === 'single' && result) c = scaledForExport(trimExport ? (trimCanvas(result)?.canvas || result) : result);
     else if (result) c = scaledForExport(result);
     if (!c) return;
     try {
@@ -442,7 +624,56 @@ export default function App() {
     flash('APNG exported');
   }
 
-  function primaryExport() { return tab === 'single' ? exportPNG() : exportAtlas(); }
+  async function exportVideoSheet() {
+    if (!sheet) return;
+    await downloadCanvas(scaledForExport(sheet.canvas), `${baseName()}-sheet.png`);
+  }
+
+  // The JSON describes the unscaled grid, so the PNG in the same ZIP is
+  // written unscaled too — otherwise every rect in the metadata would lie.
+  async function exportVideoSheetAtlas() {
+    if (!sheet) return;
+    const fmt = ATLAS_FORMATS[atlasFormat] || ATLAS_FORMATS.texturepacker;
+    const json = fmt.serialize({
+      frames: sheetFrameRecords(sheet, baseName()), width: sheet.width, height: sheet.height, baseName: baseName(),
+    });
+    downloadBlob(buildZip([
+      { name: `${baseName()}-sheet.png`, bytes: await canvasToPngBytes(sheet.canvas) },
+      { name: `${baseName()}-sheet.${fmt.ext}`, bytes: strBytes(json) },
+    ]), `${baseName()}-sheet.zip`);
+  }
+
+  async function exportVideoFramesZip() {
+    if (!sheetFrames.length) return;
+    const files = await Promise.all(sheetFrames.map(async (f, i) => ({
+      name: `${baseName()}_${String(i).padStart(3, '0')}.png`,
+      bytes: await canvasToPngBytes(scaledForExport(f.canvas)),
+    })));
+    downloadBlob(buildZip(files), `${baseName()}-frames.zip`);
+  }
+
+  // Each frame is composited into its cell first, so the animation is aligned
+  // exactly like the sheet — same cell size, same anchor.
+  async function exportVideoAPNG() {
+    if (!sheet || sheet.cells.length < 2) { flash('Need at least 2 frames'); return; }
+    const boxed = sheet.cells.map(c => {
+      const box = document.createElement('canvas');
+      box.width = sheet.cellW; box.height = sheet.cellH;
+      const ctx = box.getContext('2d'); ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(c.frame.canvas, c.ox, c.oy);
+      return scaledForExport(box);
+    });
+    downloadBlob(encodeAPNG(boxed, {
+      width: Math.round(sheet.cellW * exportScale), height: Math.round(sheet.cellH * exportScale), fps,
+    }), `${baseName()}-anim.png`);
+    flash('APNG exported');
+  }
+
+  function primaryExport() {
+    if (tab === 'single') return exportPNG();
+    if (tab === 'video') return exportVideoSheet();
+    return exportAtlas();
+  }
 
   // Keyboard shortcuts ------------------------------------------------------
   useEffect(() => {
@@ -502,14 +733,40 @@ export default function App() {
           <label className="drop" onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); onFile(e.dataTransfer.files[0]); }}>
             <Upload size={22} aria-hidden="true" />
             <strong>Drop, paste or browse</strong>
-            <span>PNG · JPG · WebP · sprite sheets</span>
-            <input type="file" accept="image/*" aria-label="Upload image" onChange={e => onFile(e.target.files[0])} />
+            <span>PNG · JPG · WebP · sprite sheets · MP4 · WebM</span>
+            <input type="file" accept="image/*,video/*" aria-label="Upload image or video" onChange={e => onFile(e.target.files[0])} />
           </label>
 
-          <div className="tabs" role="group" aria-label="Workspace">
-            <button type="button" className={tab === 'single' ? 'active' : ''} aria-pressed={tab === 'single'} data-tip="One image, one transparent PNG out" onClick={() => setTab('single')}><ImageIcon size={15} /> Single asset</button>
-            <button type="button" className={tab === 'sprite' ? 'active' : ''} aria-pressed={tab === 'sprite'} data-tip="Slice a sprite sheet / texture atlas into frames" onClick={() => setTab('sprite')}><Grid3X3 size={15} /> Atlas / sheet</button>
+          <div className="tabs three" role="group" aria-label="Workspace">
+            <button type="button" className={tab === 'single' ? 'active' : ''} aria-pressed={tab === 'single'} data-tip="One image, one transparent PNG out" onClick={() => setTab('single')}><ImageIcon size={15} /> Single</button>
+            <button type="button" className={tab === 'sprite' ? 'active' : ''} aria-pressed={tab === 'sprite'} data-tip="Slice a sprite sheet / texture atlas into frames" onClick={() => setTab('sprite')}><Grid3X3 size={15} /> Atlas</button>
+            <button type="button" className={tab === 'video' ? 'active' : ''} aria-pressed={tab === 'video'} data-tip="Turn a video into a sprite sheet: pick frames, remove the background, trim, pack on a grid" onClick={() => setTab('video')}><Film size={15} /> Video</button>
           </div>
+
+          {tab === 'video' && (
+            <Section title="Video source" icon={<Film size={15} />}>
+              {!videoMeta ? (
+                <p className="hint">Drop an MP4, WebM or MOV above. Frames are decoded by this browser — the video never leaves your machine.</p>
+              ) : (<>
+                <p className="hint">{videoMeta.width}×{videoMeta.height} · {formatTime(videoMeta.duration)} long</p>
+                <Range label="Sample rate" tip="How many frames per second to pull out of the clip. 12 fps is a typical sprite-animation cadence; raise it for fast action, lower it for fewer, cleaner frames." value={videoOpts.fps} min={1} max={30} set={v => setVideoOpts({ ...videoOpts, fps: v })} suffix=" fps" />
+                <Range label="Start" tip="First timestamp to sample — trim off the lead-in" value={range.start} min={0} max={+videoMeta.duration.toFixed(2)} step={0.05} set={v => setRange(r => ({ ...r, start: Math.min(+v.toFixed(2), r.end) }))} suffix=" s" />
+                <Range label="End" tip="Last timestamp to sample — trim off the tail" value={range.end} min={0} max={+videoMeta.duration.toFixed(2)} step={0.05} set={v => setRange(r => ({ ...r, end: Math.max(+v.toFixed(2), r.start) }))} suffix=" s" />
+                <Seg
+                  label="Extract size" tip="Resolution the frames are grabbed at. Full size keeps every edge detail; halving it makes extraction and the per-frame removal much faster and lighter on memory."
+                  value={String(videoOpts.scale)} set={v => setVideoOpts({ ...videoOpts, scale: +v })}
+                  options={[['1', '100%', 'Original video resolution'], ['0.5', '50%', 'Half size — 4× faster per frame'], ['0.25', '25%', 'Quarter size — fastest, for rough passes']]}
+                />
+                <p className="hint">
+                  {plannedFrames} frame{plannedFrames === 1 ? '' : 's'} · every {Math.round(1000 / Math.max(1, videoOpts.fps))} ms
+                  {plannedFrames >= MAX_VIDEO_FRAMES && ` · capped at ${MAX_VIDEO_FRAMES}, shorten the range or lower the sample rate`}
+                </p>
+                <button type="button" className="wide" disabled={!!progress} data-tip="Seek through the range and grab one image per timestamp" onClick={extractFrames}>
+                  <Film size={14} /> {rawFrames.length ? 'Re-extract frames' : 'Extract frames'}
+                </button>
+              </>)}
+            </Section>
+          )}
 
           <Section title="Background removal" icon={<Wand2 size={15} />} action={
             <button type="button" className="hbtn tipright" data-tip="Reset the removal settings to this mode's defaults (wand 20 / 1 / 2 / 1 · chroma 28 / 0.7 / 0.7 / 0.3)" aria-label="Reset settings" onClick={resetOpts}><RotateCcw size={13} /></button>
@@ -684,6 +941,58 @@ export default function App() {
             <p className="hint">Click the shadow tones with the wand too — the shadow layer rebuilds them as clean translucent black. Only neutral darkenings of the clicked background qualify, so colored elements can’t sneak back in.</p>
           </Section>}
 
+          {tab === 'video' && !!rawFrames.length && (
+            <Section title="Sprite sheet" icon={<LayoutGrid size={15} />}>
+              <p className="hint">{sheetOpts.placement === 'compact'
+                ? <>Every frame is trimmed to its own box and centred in a cell as small as the widest and tallest <b>kept</b> frame. Smallest sheet — but each frame is re-centred on its own, so a moving subject will jitter.</>
+                : <>Every frame keeps the position it had in the video, so the animation moves the way the clip does. The cell is the area the <b>kept</b> frames cover between them, so dropping the frame that reaches furthest out shrinks the sheet straight away — no rebuild needed.</>}</p>
+              {opts.mode === 'birefnet' && <p className="hint">BiRefNet processes one image at a time on the server. Switch Mode to Chroma key or Magic wand to run a whole clip.</p>}
+              <button type="button" className="wide" disabled={!rawFrames.length || !!progress || opts.mode === 'birefnet'} data-tip="Run the removal on every extracted frame and trim each one — afterwards, keeping or dropping frames re-packs instantly" onClick={buildSheet}>
+                <Scissors size={14} /> {cutFrames.length ? 'Reprocess' : 'Remove background & build'} ({rawFrames.length})
+              </button>
+              <Seg
+                label="Frame placement" tip="How each trimmed frame is positioned inside its cell."
+                value={sheetOpts.placement} set={v => setSheetOpts({ ...sheetOpts, placement: v })}
+                options={[
+                  ['motion', 'Preserve motion', 'Every frame keeps the position it had in the video, so a subject that moves keeps moving instead of jittering. The cell is the area the subject covers across the kept frames.'],
+                  ['compact', 'Compact', 'Each frame is centred in the smallest cell that fits the widest and tallest frame. Smallest sheet, but frames are re-centred individually, so any movement becomes wobble.'],
+                ]}
+              />
+              <Range label="Columns" tip="Frames per row. 0 lays them out on a square-ish grid." value={sheetOpts.columns} min={0} max={24} set={v => setSheetOpts({ ...sheetOpts, columns: v })} />
+              <Range label="Spacing" tip="Transparent gap between cells" value={sheetOpts.spacing} min={0} max={32} set={v => setSheetOpts({ ...sheetOpts, spacing: v })} suffix=" px" />
+              <Range label="Margin" tip="Transparent border around the whole sheet" value={sheetOpts.margin} min={0} max={64} set={v => setSheetOpts({ ...sheetOpts, margin: v })} suffix=" px" />
+              {sheetOpts.placement === 'compact' && <Seg
+                label="Frame anchor" tip="Where each trimmed frame sits inside its cell. Bottom pins the baseline, so a walk cycle's feet stay on the ground."
+                value={sheetOpts.anchor} set={v => setSheetOpts({ ...sheetOpts, anchor: v })}
+                options={[['center', 'Center', 'Centre the frame in its cell'], ['bottom', 'Bottom', 'Sit the frame on the bottom edge of its cell'], ['top', 'Top', 'Hang the frame from the top edge of its cell']]}
+              />}
+              <Toggle checked={sheetOpts.showGrid} onChange={v => setSheetOpts({ ...sheetOpts, showGrid: v })} tip="Outline every cell on the sheet preview so you can see the grid the frames are placed on">Show cell grid</Toggle>
+              <Seg label="Sheet JSON" tip="Metadata format written next to the sheet PNG. Each frame records its cell rect and its offset inside the cell." value={atlasFormat} set={setAtlasFormat} options={Object.entries(ATLAS_FORMATS).map(([id, f]) => [id, f.label])} />
+              {sheet && <p className="hint">Cell <b>{sheet.cellW}×{sheet.cellH}</b> · {sheet.cols}×{sheet.rows} grid · sheet <b>{sheet.width}×{sheet.height}</b></p>}
+            </Section>
+          )}
+
+          {tab === 'video' && !!preview && (
+            <Section title="Animation preview" icon={<Clapperboard size={15} />}>
+              <div className={'anim' + bgClass} style={bgStyle}>
+                <SheetAnimation cells={preview.cells} cellW={preview.cellW} cellH={preview.cellH} fps={fps} playing={playing} onion={onion} />
+              </div>
+              <div className="animctl">
+                <button type="button" className="iconbtn" onClick={() => setPlaying(p => !p)} aria-label={playing ? 'Pause animation' : 'Play animation'} aria-pressed={playing}>
+                  {playing ? <Pause size={15} /> : <Play size={15} />}
+                </button>
+                <div className="animinfo">
+                  <span>{preview.cells.length} frame{preview.cells.length === 1 ? '' : 's'} · {preview.cellW}×{preview.cellH}</span>
+                  <Toggle small checked={onion} onChange={setOnion} tip="Ghost the previous frame underneath to spot jitter">Onion skin</Toggle>
+                </div>
+              </div>
+              <Range label="Frame rate" tip="Playback speed here and in the exported APNG" value={fps} min={1} max={30} set={setFps} suffix=" fps" />
+              <p className="hint">{preview.raw
+                ? 'Playing the frames you kept, straight from the video. Build the sheet to preview them cut out and trimmed.'
+                : 'Exactly what the sheet holds — same cells, same anchor — so what you see here is what the APNG exports.'}</p>
+            </Section>
+          )}
+
           {tab === 'single' && (
             <Section title="Keep / erase areas" icon={<Lasso size={15} />}>
               <Seg
@@ -757,10 +1066,14 @@ export default function App() {
         <section className="canvasPanel" aria-label="Preview">
           <div className="toolbar">
             <div className="filemeta">
-              <b>{file?.name || 'Upload a UI asset or sprite sheet'}</b>
-              <span>{img
-                ? `${img.naturalWidth}×${img.naturalHeight}px · ${stats.transparentPct}% removed${tab === 'sprite' ? ` · ${exportFrames.length} sprite${exportFrames.length === 1 ? '' : 's'}` : ''}`
-                : 'transparent PNG export · sprite-aware workflow'}</span>
+              <b>{(tab === 'video' ? videoFile?.name : file?.name) || (tab === 'video' ? 'Drop a video to build a sprite sheet' : 'Upload a UI asset or sprite sheet')}</b>
+              <span>{tab === 'video'
+                ? (videoMeta
+                  ? `${videoMeta.width}×${videoMeta.height} · ${formatTime(videoMeta.duration)}${rawFrames.length ? ` · ${selectedRaw.length}/${rawFrames.length} frames kept` : ''}${sheet ? ` · ${sheet.cellW}×${sheet.cellH} cell` : ''}`
+                  : 'MP4 · WebM · MOV — decoded locally, never uploaded')
+                : (img
+                  ? `${img.naturalWidth}×${img.naturalHeight}px · ${stats.transparentPct}% removed${tab === 'sprite' ? ` · ${exportFrames.length} sprite${exportFrames.length === 1 ? '' : 's'}` : ''}`
+                  : 'transparent PNG export · sprite-aware workflow')}</span>
             </div>
             <div className="viewtools">
               <div className="bgswitch" role="group" aria-label="Preview background">
@@ -780,6 +1093,27 @@ export default function App() {
             </div>
           </div>
 
+          {tab === 'video' ? (
+            <VideoStage
+              videoEl={videoEl} duration={videoMeta?.duration} range={range}
+              onSetStart={setRangeStart} onSetEnd={setRangeEnd}
+              frames={rawFrames} previewIndex={previewIndex} setPreviewIndex={setPreviewIndex}
+              isOff={isFrameOff} toggleFrame={toggleFrame}
+              onAll={selectAllFrames} onNone={selectNoFrames} onInvert={invertFrames}
+              previewUrl={framePreviewUrl} meta={originalCanvas ? { w: originalCanvas.width, h: originalCanvas.height } : null}
+              view={videoView} setView={setVideoView} sheet={sheet} showGrid={sheetOpts.showGrid}
+              hasCuts={!!cutFrames.length} preview={preview}
+              fps={fps} setFps={setFps} playing={playing} setPlaying={setPlaying} onion={onion}
+              pixelView={pixelView} bgClass={bgClass} bgStyle={bgStyle}
+              onPick={opts.mode === 'birefnet' ? null : addSeed}
+              pickHint={opts.mode === 'chroma'
+                ? 'Chroma key runs on every frame — click the screen only if it misses, on a spot the subject never crosses'
+                : 'Click a background area — the same click runs on every frame'}
+              selectedCount={selectedRaw.length}
+              progress={progress} onCancel={() => { cancelRef.current = true; }}
+              onExtract={extractFrames} onBuild={buildSheet}
+            />
+          ) : (
           <CanvasStage
             tab={tab} img={img} url={url} resultUrl={resultUrl} overlayUrl={overlayUrl} originalCanvas={originalCanvas}
             previewBg={previewBg} zoom={zoom} setZoom={setZoom} pan={pan} setPan={setPan}
@@ -792,6 +1126,7 @@ export default function App() {
             activeFrames={activeFrames} sheetMode={sheetMode} frameSize={frameSize} isExcluded={isExcluded} toggleExclude={toggleExclude}
             busy={busy}
           />
+          )}
 
           {error && <div className="errline" role="alert">{error}</div>}
 
@@ -804,13 +1139,19 @@ export default function App() {
               <Toggle small checked={trimExport} onChange={setTrimExport} icon={<Crop size={12} />} tip="Crop away transparent borders before exporting">Trim</Toggle>
             </div>
             <div className="exportbtns">
-              <button type="button" onClick={copyResult} disabled={!result} data-tip="Copy the result PNG to the clipboard (C)"><Copy size={15} /> Copy</button>
+              <button type="button" onClick={copyResult} disabled={tab === 'video' ? !sheet : !result} data-tip="Copy the result PNG to the clipboard (C)"><Copy size={15} /> Copy</button>
               {tab === 'single' && <button type="button" className="primary" disabled={!result} onClick={exportPNG} data-tip="Download the transparent PNG (E)"><Download size={15} /> PNG</button>}
               {tab === 'sprite' && <>
                 <button type="button" disabled={!exportFrames.length} onClick={exportSheet} data-tip="Download the whole sheet with the background removed, layout unchanged"><Download size={15} /> Sheet</button>
                 <button type="button" disabled={!exportFrames.length} onClick={exportFramesZip} data-tip="Download every sprite as its own PNG inside a ZIP"><FileArchive size={15} /> ZIP</button>
                 <button type="button" disabled={exportFrames.length < 2} onClick={exportAPNG} data-tip="Download an animated PNG of the frames (keeps alpha)"><Clapperboard size={15} /> APNG</button>
                 <button type="button" className="primary" disabled={!exportFrames.length} onClick={exportAtlas} data-tip="Download a re-packed atlas PNG + JSON metadata (E)"><FileJson size={15} /> Atlas</button>
+              </>}
+              {tab === 'video' && <>
+                <button type="button" disabled={!sheetFrames.length} onClick={exportVideoFramesZip} data-tip="Download every trimmed frame as its own PNG inside a ZIP"><FileArchive size={15} /> ZIP</button>
+                <button type="button" disabled={!sheet || sheet.cells.length < 2} onClick={exportVideoAPNG} data-tip="Download an animated PNG of the sheet's frames, cell-aligned (keeps alpha)"><Clapperboard size={15} /> APNG</button>
+                <button type="button" disabled={!sheet} onClick={exportVideoSheetAtlas} data-tip="Download the sheet PNG + JSON metadata describing every cell (unscaled)"><FileJson size={15} /> Sheet + JSON</button>
+                <button type="button" className="primary" disabled={!sheet} onClick={exportVideoSheet} data-tip="Download the sprite sheet PNG (E)"><Download size={15} /> Sheet</button>
               </>}
             </div>
           </div>

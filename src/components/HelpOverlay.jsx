@@ -25,6 +25,7 @@ const TIPS = [
   ['Soft shadows', 'Pixels that are a darkened version of the background you clicked come back as translucent black shadow — anchored to your wand clicks, so it works on any background color. Tune it with Strength.'],
   ['Keep / erase areas', 'Draw a lasso or box to protect details the wand eats, force-erase leftovers, or Subtract to carve a shape back out.'],
   ['Packed vs Uniform grid', 'Most atlases are packed randomly — keep Packed atlas. Use Uniform grid only for true fixed-frame animation sheets.'],
+  ['Video → sprite sheet', 'Drop an MP4/WebM in the Video tab, pick the range and sample rate, and extract. Tune the removal on any single frame, drop the frames you do not want, then build: every kept frame is cut, trimmed, and placed on a grid whose cell is the widest and tallest of the kept frames. Exclude a big frame afterwards and the whole sheet shrinks with it.'],
 ];
 
 export function HelpOverlay({ onClose }) {

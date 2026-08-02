@@ -46,6 +46,15 @@ export const DEFAULT_OPTS = {
   shadowStrength: 100,
 };
 
+// Video sampling: 12 fps is a common sprite-animation cadence, and frames are
+// grabbed at full resolution so the cutout runs on the original pixels.
+export const DEFAULT_VIDEO = { fps: 12, scale: 1 };
+// Sprite-sheet layout. columns 0 = square-ish automatic grid; the cell size is
+// never configured — it follows the kept frames (see lib/sheet.js). Placement
+// defaults to 'motion' because these frames come from a video: preserving
+// where each frame sat is what stops an animation from wobbling.
+export const DEFAULT_SHEET = { columns: 0, margin: 0, spacing: 0, anchor: 'center', showGrid: true, placement: 'motion' };
+
 export const DEFAULT_GRID = { rows: 4, cols: 4, margin: 0, spacing: 0 };
 export const DEFAULT_DETECT = { ...ATLAS_DEFAULTS };
 export const DEFAULT_PACK = { padding: 2, extrude: true };

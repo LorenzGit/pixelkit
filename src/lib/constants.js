@@ -35,6 +35,12 @@ export const CHROMA_DARK_FLOOR = 0.08;
 // keeps genuinely key-coloured deep shadows softly selected.
 export const CHROMA_MIN_EVIDENCE = 4;
 
+// Video → sheet. Every extracted frame is held in memory as a full-size
+// canvas, so the frame budget is what keeps a long clip from exhausting the
+// tab; VIDEO_THUMB_PX is the filmstrip thumbnail size.
+export const MAX_VIDEO_FRAMES = 240;
+export const VIDEO_THUMB_PX = 112;
+
 // Packed-atlas sprite detection defaults.
 export const ATLAS_DEFAULTS = { alphaThreshold: 72, minArea: 320, mergeDistance: 2, padding: 24 };
 // Slack applied to the estimated atlas width so shelves are not over-packed.

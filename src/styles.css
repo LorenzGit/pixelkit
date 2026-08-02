@@ -98,6 +98,8 @@ button:focus-visible, .chip:focus-visible, .tabs button:focus-visible,
 
 /* Tabs */
 .tabs { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s1); background: var(--bg0); padding: var(--s1); border-radius: var(--r-md); border: 1px solid var(--line); }
+.tabs.three { grid-template-columns: repeat(3, 1fr); }
+.tabs.three button { gap: 5px; padding: 9px 4px; font-size: 12px; }
 .tabs button { display: flex; align-items: center; justify-content: center; gap: 7px; padding: 9px; color: var(--muted); font-size: 12.5px; font-weight: 500; border-radius: var(--r-sm); transition: color .15s, background-color .15s; }
 .tabs button:hover { color: var(--text); }
 .tabs button.active { background: var(--accent-grad); color: var(--bg0); font-weight: 600; box-shadow: 0 6px 16px -6px rgba(124, 108, 255, .6); }
@@ -263,6 +265,129 @@ button:disabled { opacity: .4; cursor: not-allowed; }
 .spriteTile:hover .spriteX, .spriteTile.excluded .spriteX { opacity: 1; }
 .spriteX:hover { color: var(--danger); }
 
+/* ================================================================== */
+/* Video → sheet workspace                                             */
+/* ================================================================== */
+.preview.video { display: flex; flex-direction: column; padding: var(--s3); gap: var(--s3); }
+.videoLayout { display: flex; flex-direction: column; gap: var(--s3); flex: 1; min-height: 0; width: 100%; }
+.videoBar { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; flex-shrink: 0; }
+.videoBar .segbtns.inline button { display: inline-flex; align-items: center; gap: 5px; }
+.videoCount { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.videoCount b { color: var(--text); }
+.videoCount em { color: var(--accent2); font-style: normal; }
+.videoSelect { margin-left: auto; display: flex; gap: var(--s1); }
+.videoSelect button { font-size: 11px; color: var(--muted); padding: 5px 9px; border-radius: var(--r-xs); border: 1px solid var(--line2); background: var(--panel); }
+.videoSelect button:hover { color: var(--text); border-color: var(--accent); }
+
+/* The frame / sheet viewport. Both children are size-capped so a 4K sheet
+   scales down instead of blowing the panel open. */
+.videoMain { position: relative; flex: 1; min-height: 0; display: grid; place-items: center; overflow: auto; }
+/* Live playback of exactly what the kept frames produce, docked beside the
+   sheet and beside the frame inspector — so toggling a frame shows its effect
+   on the animation without leaving the view you toggled it in. */
+.dockRow { display: flex; align-items: flex-end; gap: var(--s3); max-width: 100%; min-width: 0; }
+.frameCol { display: flex; flex-direction: column; align-items: center; gap: var(--s2); min-width: 0; }
+.frameCtl { display: flex; align-items: center; gap: var(--s2); font-size: 11.5px; color: var(--muted); }
+.frameCtl b { color: var(--text); font-variant-numeric: tabular-nums; }
+.frameCtl .iconbtn { width: 28px; height: 28px; }
+.keepBtn { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 600; padding: 6px 12px; border-radius: var(--r-sm); border: 1px solid var(--line2); background: var(--panel); color: var(--muted); margin-left: var(--s2); }
+.keepBtn.on { color: var(--accent2); border-color: rgba(74, 215, 212, .45); background: rgba(74, 215, 212, .1); }
+.keepBtn:hover:not(:disabled) { border-color: var(--accent); color: var(--text); }
+/* Play is the primary action on this row: filled while stopped, so it reads as
+   "press me", and quiet while playing. */
+.keepBtn.play { margin-left: 0; margin-right: var(--s2); color: var(--bg0); background: var(--accent-grad); border-color: transparent; }
+.keepBtn.play:hover:not(:disabled) { filter: brightness(1.08); color: var(--bg0); }
+.keepBtn.play.on { color: var(--muted); background: var(--panel); border-color: var(--line2); }
+.keepBtn.play.on:hover { color: var(--text); border-color: var(--accent); }
+.skipBtn { font-size: 11px; color: var(--muted); padding: 5px 10px; border-radius: 999px; border: 1px solid var(--line2); background: var(--panel); }
+.skipBtn:hover { color: var(--text); border-color: var(--accent); }
+.skipBtn.on { color: var(--accent2); border-color: rgba(74, 215, 212, .45); background: rgba(74, 215, 212, .12); }
+.frameNote { font-size: 11px; color: var(--muted2); text-align: center; }
+.frameCol .animCanvas { max-height: 100%; }
+.frameCol .animLabel { bottom: -16px; }
+.sheetDock { flex-shrink: 0; display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 9px 11px; border-radius: var(--r-md); background: rgba(10, 12, 18, .86); border: 1px solid var(--line2); box-shadow: var(--shadow); }
+.sheetDock b { font-size: 10px; text-transform: uppercase; letter-spacing: .3px; color: var(--muted); }
+.sheetDock span { font-size: 10px; color: var(--muted2); font-variant-numeric: tabular-nums; }
+.sheetDock .animCanvas { max-width: 116px; max-height: 116px; }
+.dockPlay { display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; font-weight: 600; color: var(--text); padding: 5px 12px; border-radius: 999px; border: 1px solid var(--line2); background: var(--panel); }
+.dockPlay:hover { border-color: var(--accent); background: rgba(124, 108, 255, .12); }
+/* Paused reads as a call to action, so the way back to playing is obvious. */
+.dockPlay.paused { color: var(--bg0); background: var(--accent-grad); border-color: transparent; }
+.dockPlay.paused:hover { filter: brightness(1.08); }
+/* Clear of the view bar, which owns the top of this stage. */
+.preview.video .drawhint { top: 52px; }
+
+/* Source player. The checkerboard means "transparent" everywhere else in the
+   app, so the opaque source video gets a plain backdrop instead. */
+.videoMain.source { background: var(--bg0); border-radius: var(--r-sm); }
+.playerBox { display: flex; flex-direction: column; gap: var(--s3); align-items: center; max-width: 100%; }
+.playerHolder { line-height: 0; box-shadow: var(--shadow); border-radius: var(--r-sm); overflow: hidden; }
+.videoPlayer { display: block; max-width: 100%; max-height: 56vh; width: auto; height: auto; background: #000; }
+.playerTools { display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; justify-content: center; font-size: 11.5px; color: var(--muted); }
+.playerTools b { color: var(--text); font-variant-numeric: tabular-nums; }
+.playerTools button { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--muted); padding: 6px 11px; border-radius: var(--r-sm); border: 1px solid var(--line2); background: var(--panel); }
+.playerTools button:hover { color: var(--text); border-color: var(--accent); }
+button.go { color: var(--bg0) !important; background: var(--accent-grad) !important; border-color: transparent !important; font-weight: 600; }
+button.go:hover:not(:disabled) { filter: brightness(1.08); }
+
+/* Animation view */
+.animBig { display: flex; flex-direction: column; align-items: center; gap: var(--s3); }
+/* The counter sits in the flow, not floated under the canvas — as an overlay
+   it landed on top of the play button below it. */
+.animCanvasWrap { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.animCanvas { display: block; max-width: 100%; max-height: 46vh; width: auto; height: auto; filter: drop-shadow(0 6px 16px rgba(0, 0, 0, .45)); }
+.animLabel { font-size: 10.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.animCtlRow { display: flex; align-items: center; gap: var(--s3); margin-top: var(--s3); font-size: 11.5px; color: var(--muted); }
+.animFps { display: flex; align-items: center; gap: var(--s2); font-variant-numeric: tabular-nums; }
+.animFps input { width: 96px; }
+.anim .animCanvas { max-height: 150px; }
+/* Sized to the frame itself (never upscaled, like the single-image stage) and
+   capped to the stage width; object-fit keeps the aspect when the cap bites,
+   which is what the click-to-pixel mapping assumes. */
+.videoFrame { display: block; max-width: 100%; max-height: 100%; width: auto; height: auto; object-fit: contain; border-radius: var(--r-xs); box-shadow: var(--shadow); cursor: crosshair; }
+.sheetWrap { position: relative; line-height: 0; box-shadow: var(--shadow); }
+.sheetHolder { line-height: 0; }
+.sheetCanvas { display: block; max-width: 100%; max-height: 100%; width: auto; height: auto; }
+.sheetGrid { position: absolute; inset: 0; width: 100%; height: 100%; opacity: .55; pointer-events: none; }
+
+/* Filmstrip */
+.filmHead { display: flex; align-items: center; gap: var(--s3); flex-shrink: 0; font-size: 11px; color: var(--muted2); }
+.filmHead span { display: inline-flex; align-items: center; gap: 6px; }
+.filmHead button { margin-left: auto; padding: 6px 12px; border-radius: var(--r-sm); font-size: 11.5px; border: 1px solid var(--line2); }
+/* The strip nearly always overflows. Edge fades say "there is more this way",
+   the arrows give a way to get there, and the scrollbar is left visible rather
+   than hairline-thin — with 25+ frames the overflow was invisible before. */
+.filmScroll { position: relative; flex-shrink: 0; min-width: 0; }
+.filmScroll::before, .filmScroll::after { content: ''; position: absolute; top: 0; bottom: 8px; width: 46px; pointer-events: none; z-index: 2; opacity: 0; transition: opacity .18s; }
+.filmScroll::before { left: 0; background: linear-gradient(90deg, var(--bg0), transparent); }
+.filmScroll::after { right: 0; background: linear-gradient(270deg, var(--bg0), transparent); }
+.filmScroll.moreLeft::before, .filmScroll.moreRight::after { opacity: .95; }
+.filmArrow { position: absolute; top: 50%; transform: translateY(-50%); z-index: 3; width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; background: rgba(16, 20, 30, .95); border: 1px solid var(--line2); color: var(--text); box-shadow: var(--shadow); }
+.filmArrow:hover { border-color: var(--accent); background: rgba(124, 108, 255, .22); }
+.filmArrow.left { left: 2px; }
+.filmArrow.right { right: 2px; }
+.filmstrip { display: flex; gap: 6px; overflow-x: auto; overflow-y: hidden; padding: 2px 2px 8px; flex-shrink: 0; scroll-padding-inline: 48px; }
+.filmstrip::-webkit-scrollbar { height: 8px; }
+.filmstrip::-webkit-scrollbar-thumb { background: var(--line2); border-radius: 8px; border: 1px solid transparent; background-clip: padding-box; }
+.filmstrip::-webkit-scrollbar-thumb:hover { background: var(--accent); background-clip: padding-box; }
+.filmstrip::-webkit-scrollbar-track { background: rgba(255, 255, 255, .04); border-radius: 8px; }
+.filmstrip { scrollbar-color: var(--line2) rgba(255, 255, 255, .04); }
+.filmTile { position: relative; flex: 0 0 auto; border-radius: var(--r-sm); border: 1px solid rgba(255, 255, 255, .08); background: rgba(0, 0, 0, .22); transition: border-color .15s, opacity .15s, transform .12s; }
+.filmTile:hover { transform: translateY(-2px); }
+.filmTile.cur { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.filmTile.off { opacity: .3; }
+.filmTile.off img { filter: grayscale(1); }
+.filmPick { display: grid; place-items: center; gap: 3px; padding: 5px; border-radius: var(--r-sm); }
+.filmPick img { display: block; width: auto; height: 54px; max-width: 96px; object-fit: contain; border-radius: 3px; }
+.filmPick span { font-size: 9.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+/* The keep/drop badge stays visible: it doubles as the state readout, so a
+   strip of 60 frames can be read at a glance without hovering each one. */
+.filmToggle { position: absolute; top: 3px; right: 3px; width: 17px; height: 17px; display: grid; place-items: center; border-radius: 50%; background: rgba(10, 12, 18, .8); color: var(--accent2); border: 1px solid rgba(74, 215, 212, .35); transition: color .15s, border-color .15s; }
+.filmTile.off .filmToggle { color: var(--muted2); border-color: var(--line2); }
+.filmTile:hover .filmToggle { color: var(--text); border-color: var(--accent); }
+.busyCancel { font-size: 11px; color: var(--muted); border: 1px solid var(--line2); border-radius: var(--r-xs); padding: 4px 9px; }
+.busyCancel:hover { color: var(--danger); border-color: var(--danger); }
+
 /* Empty state */
 .empty { max-width: 480px; text-align: center; color: var(--muted); animation: fadein .5s ease both; }
 .emptyglow { width: 76px; height: 76px; margin: 0 auto 18px; border-radius: 20px; display: grid; place-items: center; color: var(--accent); background: radial-gradient(circle, rgba(124, 108, 255, .22), transparent 70%); border: 1px solid var(--line); }
@@ -339,7 +464,8 @@ kbd { display: inline-block; min-width: 22px; text-align: center; padding: 3px 7
 /* .tipright right-aligns (for controls near a panel's right edge).    */
 /* ================================================================== */
 [data-tip] { position: relative; }
-.spriteX[data-tip] { position: absolute; }
+/* These are positioned overlays; the tooltip base rule must not reset them. */
+.spriteX[data-tip], .filmToggle[data-tip] { position: absolute; }
 [data-tip]::after {
   content: attr(data-tip);
   position: absolute; z-index: 130;
@@ -393,7 +519,8 @@ kbd { display: inline-block; min-width: 22px; text-align: center; padding: 3px 7
   .iconbtn, .bgswitch button, .hbtn { width: 40px; height: 40px; }
   .check input { width: 20px; height: 20px; }
   .check.sm input { width: 18px; height: 18px; }
-  .keychip button, .spriteX { min-width: 32px; min-height: 32px; }
+  .keychip button, .spriteX, .filmToggle { min-width: 32px; min-height: 32px; }
+  .filmToggle { opacity: 1; }
   .tabs button, .segbtns button, .exportbtns button, button.wide, button.ghost, .eyebtn { padding-top: 11px; padding-bottom: 11px; }
   input[type=range] { height: 7px; }
   input[type=range]::-webkit-slider-thumb { width: 22px; height: 22px; }
