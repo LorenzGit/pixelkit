@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Check, ChevronLeft, ChevronRight, Clapperboard, Film, Grid3X3, ImageIcon,
-  Pause, Play, Scissors, SkipBack, SkipForward, X,
+  FlipHorizontal2, Pause, Play, Scissors, SkipBack, SkipForward, X,
 } from 'lucide-react';
 import { formatTime } from '../lib/video.js';
 import { SheetAnimation } from './SheetAnimation.jsx';
@@ -26,6 +26,7 @@ export function VideoStage({
   frames, previewIndex, setPreviewIndex, isOff, toggleFrame, onAll, onNone, onInvert,
   previewUrl, view, setView, sheet, showGrid, hasCuts, preview,
   fps, setFps, playing, setPlaying, onion,
+  flipX, setFlipX,
   pixelView, bgClass, bgStyle, onPick, pickHint,
   selectedCount, progress, onCancel, onExtract, onBuild, busyLabel,
 }) {
@@ -65,10 +66,14 @@ export function VideoStage({
     // object-fit letterboxes the frame inside its element, so map through the
     // rendered box; clicks on the letterbox are not pixels and are ignored.
     const k = Math.min(r.width / meta.w, r.height / meta.h);
-    const x = (e.clientX - r.left - (r.width - meta.w * k) / 2) / k;
+    const displayX = (e.clientX - r.left - (r.width - meta.w * k) / 2) / k;
     const y = (e.clientY - r.top - (r.height - meta.h * k) / 2) / k;
-    if (x < 0 || y < 0 || x >= meta.w || y >= meta.h) return;
-    onPick({ x: Math.floor(x), y: Math.floor(y) });
+    if (displayX < 0 || y < 0 || displayX >= meta.w || y >= meta.h) return;
+    // The cutout recipe still runs on the original source pixels. When the
+    // Frame view is mirrored, map the click through that mirror so the pixel
+    // the user sees is still the one that gets sampled.
+    const sourceX = flipX ? meta.w - displayX : displayX;
+    onPick({ x: Math.min(meta.w - 1, Math.floor(sourceX)), y: Math.floor(y) });
   }
 
   // Prev/next either walk every extracted frame or hop between the kept ones.
@@ -180,7 +185,7 @@ export function VideoStage({
                         still frame — not in a thumbnail off to one side. */}
                     {playing && preview
                       ? <SheetAnimation cells={preview.cells} cellW={preview.cellW} cellH={preview.cellH} boxW={meta?.w} boxH={meta?.h} fps={fps} playing={playing} onion={onion} label />
-                      : <img className="videoFrame" src={previewUrl} draggable={false} onClick={pick} alt={`Frame ${previewIndex + 1} preview`} />}
+                      : <img className="videoFrame" src={previewUrl} draggable={false} onClick={pick} alt={`Frame ${previewIndex + 1} preview`} style={{ transform: flipX ? 'scaleX(-1)' : undefined }} />}
                     <div className="frameCtl">
                       <button
                         type="button" className={'keepBtn play' + (playing ? ' on' : '')}
@@ -188,6 +193,13 @@ export function VideoStage({
                         data-tip={preview ? (playing ? 'Pause and go back to the frame you were on' : 'Play the frames you kept, right here') : 'Keep at least one frame to play'}
                       >
                         {playing ? <><Pause size={13} /> Pause</> : <><Play size={13} /> Play</>}
+                      </button>
+                      <button
+                        type="button" className={'skipBtn' + (flipX ? ' on' : '')}
+                        aria-pressed={flipX} onClick={() => setFlipX(!flipX)}
+                        data-tip="Mirror the frame, filmstrip, animation, sprite sheet, and exports horizontally"
+                      >
+                        <FlipHorizontal2 size={13} /> Flip X
                       </button>
                       {/* Playing is for watching, paused is for editing: the
                           per-frame controls would only describe the frame you
@@ -284,7 +296,7 @@ export function VideoStage({
                   return (
                     <div className={'filmTile' + (i === previewIndex ? ' cur' : '') + (off ? ' off' : '')} key={f.index}>
                       <button type="button" className="filmPick" aria-pressed={i === previewIndex} onClick={() => setPreviewIndex(i)} data-tip={`Inspect frame ${i + 1} at ${formatTime(f.time)}`}>
-                        <img src={f.thumb} draggable={false} alt="" />
+                        <img src={f.thumb} draggable={false} alt="" style={{ transform: flipX ? 'scaleX(-1)' : undefined }} />
                         <span>{i + 1}</span>
                       </button>
                       <button type="button" className="filmToggle" onClick={() => toggleFrame(f)}

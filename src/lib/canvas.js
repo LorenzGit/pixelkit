@@ -40,6 +40,19 @@ export function cropCanvas(src, x, y, w, h) {
   return c;
 }
 
+// Return a horizontally mirrored copy without changing the source canvas.
+// Keeping this as pixel data (instead of a CSS transform) means previews and
+// every export format see the exact same frame.
+export function flipCanvasX(src) {
+  const c = document.createElement('canvas');
+  c.width = src.width; c.height = src.height;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.translate(c.width, 0);
+  ctx.scale(-1, 1);
+  ctx.drawImage(src, 0, 0);
+  return c;
+}
+
 export function scaleCanvas(src, factor, pixel) {
   if (factor === 1) return src;
   const c = document.createElement('canvas');

@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 
 import { clamp, hexToRgb, rgbToHex, transparentPct } from './lib/color.js';
-import { drawImageToCanvas, loadImage, dataURL, canvasToBlob, scaleCanvas, trimCanvas } from './lib/canvas.js';
+import { drawImageToCanvas, loadImage, dataURL, canvasToBlob, flipCanvasX, scaleCanvas, trimCanvas } from './lib/canvas.js';
 import { wandCutout } from './lib/wand.js';
 import { chromaCutout } from './lib/chroma.js';
 import { applyRegions } from './lib/regions.js';
@@ -412,7 +412,20 @@ export default function App() {
   // The sheet is laid out from the CURRENT selection, so excluding a frame
   // after the fact re-packs the grid — and if the widest or tallest frame was
   // the one excluded, every cell shrinks with it.
-  const sheetFrames = useMemo(() => cutFrames.filter(f => !frameOff[f.index]), [cutFrames, frameOff]);
+  const sheetFrames = useMemo(() => cutFrames
+    .filter(f => !frameOff[f.index])
+    .map(f => {
+      if (!sheetOpts.flipX) return f;
+      // Mirror both the trimmed pixels and their position in the source frame.
+      // Preserve-motion layouts therefore reverse the whole shot, including a
+      // character's facing direction and its path across the frame.
+      const sourceW = rawFrames[f.index]?.canvas.width;
+      return {
+        ...f,
+        canvas: flipCanvasX(f.canvas),
+        x: Number.isFinite(sourceW) ? sourceW - f.x - f.w : f.x,
+      };
+    }), [cutFrames, frameOff, rawFrames, sheetOpts.flipX]);
   const sheet = useMemo(() => {
     const layout = sheetLayout(sheetFrames, sheetOpts);
     return layout ? { ...layout, canvas: drawSpriteSheet(layout) } : null;
@@ -424,11 +437,12 @@ export default function App() {
   const rawPreview = useMemo(() => {
     if (cutFrames.length || !selectedRaw.length) return null;
     const cellW = selectedRaw[0].canvas.width, cellH = selectedRaw[0].canvas.height;
+    const frameCanvas = f => (sheetOpts.flipX ? flipCanvasX(f.canvas) : f.canvas);
     return {
       raw: true, cellW, cellH,
-      cells: selectedRaw.map((f, i) => ({ index: i, frame: { canvas: f.canvas, w: cellW, h: cellH }, ox: 0, oy: 0 })),
+      cells: selectedRaw.map((f, i) => ({ index: i, frame: { canvas: frameCanvas(f), w: cellW, h: cellH }, ox: 0, oy: 0 })),
     };
-  }, [cutFrames.length, selectedRaw]);
+  }, [cutFrames.length, selectedRaw, sheetOpts.flipX]);
 
   // What the docks and the sidebar play: the packed sheet once it exists,
   // the raw kept frames until then.
@@ -1104,6 +1118,7 @@ export default function App() {
               view={videoView} setView={setVideoView} sheet={sheet} showGrid={sheetOpts.showGrid}
               hasCuts={!!cutFrames.length} preview={preview}
               fps={fps} setFps={setFps} playing={playing} setPlaying={setPlaying} onion={onion}
+              flipX={!!sheetOpts.flipX} setFlipX={v => setSheetOpts({ ...sheetOpts, flipX: v })}
               pixelView={pixelView} bgClass={bgClass} bgStyle={bgStyle}
               onPick={opts.mode === 'birefnet' ? null : addSeed}
               pickHint={opts.mode === 'chroma'

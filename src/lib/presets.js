@@ -53,7 +53,7 @@ export const DEFAULT_VIDEO = { fps: 12, scale: 1 };
 // never configured — it follows the kept frames (see lib/sheet.js). Placement
 // defaults to 'motion' because these frames come from a video: preserving
 // where each frame sat is what stops an animation from wobbling.
-export const DEFAULT_SHEET = { columns: 0, margin: 0, spacing: 0, anchor: 'center', showGrid: true, placement: 'motion' };
+export const DEFAULT_SHEET = { columns: 0, margin: 0, spacing: 0, anchor: 'center', showGrid: true, placement: 'motion', flipX: false };
 
 export const DEFAULT_GRID = { rows: 4, cols: 4, margin: 0, spacing: 0 };
 export const DEFAULT_DETECT = { ...ATLAS_DEFAULTS };
